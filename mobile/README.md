@@ -62,7 +62,7 @@ npm run dev       # browser dev loop; copy .env.example to .env.local first
 npm run build     # typecheck, then rebuild app/src/main/assets/www
 ```
 
-Commit the rebuilt `assets/www` with your source change; CI checks they match.
+Commit the rebuilt `assets/www` with your source change so the APK matches the source.
 
 ## How the pieces map to the API
 

@@ -1,6 +1,6 @@
 # TeachEase backend
 
-FastAPI backend for the RAITE 2026 “AI in Education” hackathon. Teachers verify answer keys, correct recognition, approve scores, edit materials and review consultation drafts. No Flutter or native Android code is included.
+FastAPI backend for the RAITE 2026 “AI in Education” hackathon. Teachers verify answer keys, correct recognition, approve scores, edit materials and review consultation drafts. The Android client (a WebView app) lives in [mobile/](mobile/README.md).
 
 Implemented: Supabase Auth verification and MFA enforcement; teacher-scoped assessments and immutable answer-key versions; deterministic MCQ/True-False scoring; manual rubric-based essay scores; submissions, adjustments and explicit approval; atomic, idempotent offline uploads; real online Gemini OCR and teaching generation; class/student/enrollment history; competency evidence and term consultations; PostgreSQL RLS; tests and Cloud Run configuration.
 
@@ -30,6 +30,7 @@ Without `TEST_POSTGRES_URL`, PostgreSQL integration tests are explicitly skipped
 
 ## Frontend handoff
 
+- [Android client](mobile/README.md): setup, backend configuration and how each screen maps to these routes.
 - [Frontend integration guide](docs/frontend-integration.md): routes, workflows, upload ordering and error handling.
 - [API reference](docs/api.md) and [exported OpenAPI](docs/openapi.json): request/response contracts and status codes.
 - [Shared scoring specification](docs/scoring.md) and [hand-calculated fixtures](fixtures/scoring-v1.json): port the algorithm to Dart and run these fixtures on-device.
