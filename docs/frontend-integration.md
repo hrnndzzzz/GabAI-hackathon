@@ -1,6 +1,6 @@
 # Flutter team integration
 
-Base URL is the deployed HTTPS service; routes are under `/v1`. `/docs` provides interactive Swagger UI; checked-in `openapi.json` can generate Dart clients. All payloads reject unknown properties. UUIDs are strings, dates are ISO `YYYY-MM-DD`, timestamps are ISO with timezone, scores are decimal strings.
+Base URL is the HTTPS API service; routes are under `/v1`. `/docs` provides interactive Swagger UI; checked-in `openapi.json` can generate Dart clients. All payloads reject unknown properties. UUIDs are strings, dates are ISO `YYYY-MM-DD`, timestamps are ISO with timezone, scores are decimal strings.
 
 ## Login and sensitive data
 
@@ -42,6 +42,8 @@ Results are saved as editable drafts. The common structured content includes sec
 
 ## Students, classes and consultations
 
+Teachers can upload Excel `.xlsx` or UTF-8 CSV masterlists with student number, email, name and grade level. Use `/v1/roster-imports/preview`, show normalized grade/section assignments and row errors, then explicitly confirm via `/v1/roster-imports`. Missing sections default to **Unassigned** under the corresponding grade/year. Select the academic year and start date explicitly. [Roster import contracts and examples](roster-imports.md) describe file limits, matching, safe retries and historical enrollment handling. Students now expose optional `student_number` and `email` fields.
+
 Create academic years → terms; grade/year levels → sections tied to a year; students → dated enrollments. A move closes the previous enrollment and creates another; never move an existing enrollment record to a new section. Overlaps are rejected. `GET /students` accepts `grade_level_id`, `section_id`, `academic_year_id` and `as_of`; without `as_of`, matching enrollment history is included.
 
 Associate assessments with subject/term/date at creation. Those links remain immutable. Tag questions through `competency_ids` in a new key version. Tags are snapshotted to preserve historical evidence.
@@ -58,8 +60,8 @@ Errors use `{"error":{"code":"review_required","message":"...","request_id":"...
 - 403: MFA needed. Do not treat it as a successful login to TeachEase records.
 - 404: nonexistent or owned by another teacher; no ownership information is exposed.
 - 409: review needed, mismatched totals/version, stale revision, duplicate or upload conflict. Correct the cause first.
-- 413/415/422: shrink/replace the image or correct the request.
-- 429: honor `Retry-After`; AI calls are billed and are not idempotent.
+- 413/415/422: shrink/replace the image or roster file, or correct the request.
+- 429: honor `Retry-After` when present; otherwise use bounded exponential backoff. AI calls are billed and are not idempotent. `roster_busy` indicates parser capacity; roster retries with the same UUID/payload are safe.
 - 502/503/504: retry reads and idempotent uploads with backoff. Do not blindly retry a material/consultation creation after a lost success response: first inspect the list for the created draft.
 
 Maximum request body: 6 MiB; image: 5 MiB/20 million pixels by default. JPEG/PNG/WebP only, single-frame. No confidence percentages or coordinates are returned. CORS is configured for web integrations; Android requests still require authentication.

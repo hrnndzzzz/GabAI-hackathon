@@ -100,6 +100,13 @@ class Student(Owned, Base):
     __tablename__ = "students"
     display_name: Mapped[str] = mapped_column(String(120))
     local_identifier: Mapped[str | None] = mapped_column(String(120))
+    student_number: Mapped[str | None] = mapped_column(String(120))
+    email: Mapped[str | None] = mapped_column(String(254))
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id"),
+        UniqueConstraint("owner_id", "student_number", name="uq_students_owner_number"),
+        CheckConstraint("student_number IS NULL OR length(trim(student_number)) > 0"),
+    )
 
 
 class Enrollment(Owned, Base):

@@ -29,7 +29,7 @@ Do not output confidence percentages or bounding boxes. All output requires teac
 
 
 def consume_ai_limit(app, principal):
-    """Independent committed transaction: errors/retries consume quota, across all Cloud Run instances."""
+    """Independent committed transaction: errors and retries consume a shared quota."""
     with Session(app.state.engine) as db, db.begin():
         apply_identity(db, principal)
         bucket = int(time.time() // 60)

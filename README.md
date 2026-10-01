@@ -2,7 +2,7 @@
 
 FastAPI backend for the RAITE 2026 “AI in Education” hackathon. Teachers verify answer keys, correct recognition, approve scores, edit materials and review consultation drafts. No Flutter or native Android code is included.
 
-Implemented: Supabase Auth verification and MFA enforcement; teacher-scoped assessments and immutable answer-key versions; deterministic MCQ/True-False scoring; manual rubric-based essay scores; submissions, adjustments and explicit approval; atomic, idempotent offline uploads; real online Gemini OCR and teaching generation; class/student/enrollment history; competency evidence and term consultations; PostgreSQL RLS; tests and Cloud Run configuration.
+Implemented: Supabase Auth verification and MFA enforcement; teacher-scoped assessments and immutable answer-key versions; deterministic MCQ/True-False scoring; manual rubric-based essay scores; submissions, adjustments and explicit approval; atomic, idempotent offline uploads; real online Gemini OCR and teaching generation; class/student/enrollment history; Excel/CSV student masterlist preview and import; competency evidence and term consultations; PostgreSQL RLS; tests.
 
 ## Run locally
 
@@ -31,12 +31,14 @@ Without `TEST_POSTGRES_URL`, PostgreSQL integration tests are explicitly skipped
 ## Frontend handoff
 
 - [Frontend integration guide](docs/frontend-integration.md): routes, workflows, upload ordering and error handling.
+- [Excel/CSV student masterlist imports](docs/roster-imports.md): preview, automatic grade/section assignment, safe retries and [fictional CSV template](fixtures/student-roster.csv).
 - [API reference](docs/api.md) and [exported OpenAPI](docs/openapi.json): request/response contracts and status codes.
 - [Shared scoring specification](docs/scoring.md) and [hand-calculated fixtures](fixtures/scoring-v1.json): port the algorithm to Dart and run these fixtures on-device.
 - [Fictional request examples](fixtures/api-examples.json).
+- [System flowchart](docs/system-flowchart.md).
 - [Architecture and trust boundaries](docs/architecture.md).
-- [Supabase setup, migrations and Cloud Run deployment](docs/setup.md).
-- [Security controls and deployment requirements](docs/security.md).
+- [Supabase setup and migrations](docs/setup.md).
+- [Security controls](docs/security.md).
 - [Verification status and limitations](docs/verification.md).
 
 All `/v1` endpoints require a verified Supabase access token. Production requires `aal2` MFA. The backend never handles teacher passwords or issues its own JWTs. Keep database credentials and the Gemini key on the server. No Supabase service-role key is required.
@@ -45,4 +47,4 @@ Gemini OCR is **online OCR**. Offline recognition, scoring, local saving and acc
 
 Images are transient in this release: validated, decoded, stripped of metadata, sent to Gemini only on an explicit OCR call, then discarded. Retained image storage is optional and is not enabled. No official term grades, unrestricted identification/numerical matching, AI essay grading, student portal or background sync are implemented.
 
-No live Supabase project, Gemini account or Cloud Run deployment is provisioned by these files. Configure credentials and complete the live checks in `docs/verification.md` before using real student records.
+No live Supabase project or Gemini account is provisioned by these files. Configure credentials and complete the live checks in `docs/verification.md` before using real student records.

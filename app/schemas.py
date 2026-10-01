@@ -3,7 +3,15 @@ from decimal import Decimal
 from typing import Annotated, Generic, Literal, TypeVar
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 Money = Annotated[Decimal, Field(ge=0, le=100000, max_digits=8, decimal_places=2)]
 PositivePoints = Annotated[Decimal, Field(gt=0, le=10000, max_digits=7, decimal_places=2)]
@@ -472,6 +480,8 @@ class SectionOut(Record, SectionCreate):
 class StudentCreate(Identified):
     display_name: Short
     local_identifier: Short | None = None
+    student_number: Short | None = None
+    email: Annotated[EmailStr, Field(max_length=254)] | None = None
 
 
 class StudentOut(Record, StudentCreate):
@@ -481,6 +491,8 @@ class StudentOut(Record, StudentCreate):
 class StudentEdit(Schema):
     display_name: Short
     local_identifier: Short | None = None
+    student_number: Short | None = None
+    email: Annotated[EmailStr, Field(max_length=254)] | None = None
 
 
 class EnrollmentCreate(Identified):

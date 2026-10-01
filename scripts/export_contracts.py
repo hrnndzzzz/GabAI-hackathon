@@ -1,14 +1,10 @@
-"""Regenerate reviewable DDL/OpenAPI contracts. Does not contact external services."""
+"""Regenerate OpenAPI contracts. Applied migration files are immutable."""
 
 import json
 from pathlib import Path
 
-from sqlalchemy.dialects import postgresql
-from sqlalchemy.schema import CreateIndex, CreateTable
-
 from app.config import Settings
 from app.main import create_app
-from app.models import Base
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,16 +18,6 @@ def export():
     write_api_reference(contract)
     app.state.auth_http.close()
     app.state.engine.dispose()
-    dialect = postgresql.dialect()
-    ddl = ["-- Generated from app/models.py. Apply once, followed by 0002_security.sql.\nBEGIN;"]
-    for table in Base.metadata.sorted_tables:
-        ddl.append(str(CreateTable(table).compile(dialect=dialect)).strip() + ";")
-        for index in sorted(table.indexes, key=lambda i: i.name):
-            ddl.append(str(CreateIndex(index).compile(dialect=dialect)) + ";")
-    ddl.append("COMMIT;\n")
-    path = ROOT / "supabase" / "migrations" / "0001_schema.sql"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n\n".join(ddl), encoding="utf-8")
 
 
 def write_api_reference(contract):
@@ -118,9 +104,9 @@ def write_api_reference(contract):
         "",
         "All `/v1` routes require a verified Supabase bearer token (production: MFA `aal2`). Health and documentation are public. Request/response field definitions, constraints, enums and nullability are in [openapi.json](openapi.json) and live `/docs`.",
         "",
-        "Common errors: 401 missing/invalid token; 403 MFA; 404 absent/foreign-owned record; 409 conflict/stale revision/review required/score mismatch; 413 size; 415 type; 422 validation; 429 AI limit; 500 unexpected; 502 provider/invalid AI output; 503 Auth/database/configuration; 504 AI timeout. Error format: `error: {code, message, request_id}`. No submitted sensitive values are echoed.",
+        "Common errors: 401 missing/invalid token; 403 MFA; 404 absent/foreign-owned record; 409 conflict/stale revision/review required/score mismatch; 413 size; 415 type; 422 validation; 429 AI limit/parser capacity; 500 unexpected; 502 provider/invalid AI output; 503 Auth/database/configuration; 504 AI timeout. Error format: `error: {code, message, request_id}`. No submitted sensitive values are echoed in errors.",
         "",
-        "List responses: `items`, `limit`, `offset`, `has_more`. Limits 1–100 (default 20); offset default 0. GETs are safe to retry. Only the `/uploads/*` create operations guarantee idempotent retries. Other create retries can conflict or produce another generated draft. Approval/edit transitions and complete retry rules are in [frontend-integration.md](frontend-integration.md).",
+        "List responses: `items`, `limit`, `offset`, `has_more`. Limits 1–100 (default 20); offset default 0. GETs are safe to retry. `/uploads/*` and `/roster-imports` guarantee idempotent retries with stable UUIDs and identical payloads. Roster previews save nothing; their row arrays are complete and bounded to 2,000 rows. Other create retries can conflict or produce another generated draft. Approval/edit transitions and complete retry rules are in [frontend-integration.md](frontend-integration.md) and [roster-imports.md](roster-imports.md).",
         "",
         "Examples below are fictional structural examples. Create referenced records first, use returned UUIDs/revisions, and respect date/ownership relationships. The shared `$BASE_URL` and `$ACCESS_TOKEN` variables are supplied by the caller; do not commit real tokens.",
         "",
@@ -159,7 +145,13 @@ def write_api_reference(contract):
         if path.startswith("/v1"):
             command += ' -H "Authorization: Bearer $ACCESS_TOKEN"'
         if "multipart/form-data" in body:
-            command += ' -F "file=@fictional-paper.png;type=image/png"'
+            if path.startswith("/v1/roster-imports"):
+                command += ' -F "file=@fixtures/student-roster.csv;type=text/csv"'
+                command += ' -F "academic_year_id=$ACADEMIC_YEAR_ID" -F "starts_on=2026-06-01"'
+                if path == "/v1/roster-imports":
+                    command += ' -F "import_id=$IMPORT_ID" -F "expected_fingerprint=$PREVIEW_FINGERPRINT" -F "confirmed=true"'
+            else:
+                command += ' -F "file=@fictional-paper.png;type=image/png"'
         elif body:
             command += ' -H "Content-Type: application/json" --data @request.json'
         lines.extend(["```bash", command, "```"])

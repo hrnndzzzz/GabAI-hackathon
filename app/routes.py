@@ -556,6 +556,9 @@ def student_get(student_id: UUID, user: Auth, db: DB):
 def student_edit(student_id: UUID, payload: s.StudentEdit, user: Auth, db: DB):
     record = Repo(db, user.id).get(m.Student, student_id, lock=True)
     record.display_name, record.local_identifier = payload.display_name, payload.local_identifier
+    for name in ("student_number", "email"):
+        if name in payload.model_fields_set:
+            setattr(record, name, getattr(payload, name))
     db.flush()
     return s.StudentOut.model_validate(record)
 

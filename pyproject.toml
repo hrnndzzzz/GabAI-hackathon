@@ -13,6 +13,7 @@ dependencies = [
   "sqlalchemy>=2.0.48,<2.1", "psycopg[binary]>=3.3,<4",
   "httpx>=0.28,<1", "google-genai>=2.19,<3",
   "python-multipart>=0.0.22,<1", "Pillow>=12.1,<13",
+  "openpyxl>=3.1.5,<4", "defusedxml>=0.7.1,<1", "email-validator>=2.2,<3",
 ]
 
 [project.optional-dependencies]

@@ -132,6 +132,90 @@ def test_postgres_concurrent_upload_is_idempotent(pg_client, assessment_payload)
     assert sorted(r.json()["status"] for r in results) == ["already_uploaded", "created"]
 
 
+def test_postgres_roster_concurrency_and_contact_rls(pg_client, pg_url):
+    from tests.test_roster_imports import HEAD, academic_year, commit, preview
+
+    number = str(uuid4())
+    data = (HEAD + f"{number},learner@example.com,Fictional Roster Learner,Grade 6,Orchid\n").encode()
+    options = academic_year(pg_client)
+    digest = preview(pg_client, options, data).json()["fingerprint"]
+    identifier = uuid4()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(lambda _: commit(pg_client, options, digest, data, import_id=identifier), range(2))
+        )
+    assert all(r.status_code == 200 for r in results), [r.text for r in results]
+    assert sorted(r.json()["status"] for r in results) == ["already_imported", "imported"]
+    # Two further imports with distinct UUIDs cannot duplicate the student or enrollment.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: commit(pg_client, options, digest, data), range(2)))
+    assert all(
+        r.status_code == 200 and r.json()["students_created"] == 0 and r.json()["enrollments_created"] == 0
+        for r in results
+    )
+    student_id = results[0].json()["assignments"][0]["student_id"]
+    with psycopg.connect(pg_url) as conn:
+        identity(conn, TEACHER)
+        assert (
+            conn.execute("SELECT count(*) FROM students WHERE student_number=%s", (number,)).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute("SELECT count(*) FROM enrollments WHERE student_id=%s", (student_id,)).fetchone()[0]
+            == 1
+        )
+        identity(conn, OTHER)
+        assert conn.execute("SELECT email FROM students WHERE id=%s", (student_id,)).fetchall() == []
+        assert (
+            conn.execute("SELECT response FROM upload_receipts WHERE id=%s", (identifier,)).fetchall() == []
+        )
+        assert (
+            conn.execute(
+                "UPDATE students SET email='tampered@example.com' WHERE id=%s", (student_id,)
+            ).rowcount
+            == 0
+        )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO students(id,owner_id,display_name,student_number,email,created_at,updated_at) VALUES (%s,%s,'Spoof',%s,'spoof@example.com',now(),now())",
+                    (uuid4(), TEACHER, str(uuid4())),
+                )
+        conn.rollback()
+
+
+def test_postgres_roster_receipt_collision_rolls_back_entire_import(pg_client, pg_url):
+    from tests.test_roster_imports import HEAD, academic_year, commit, preview
+
+    identifier, number = uuid4(), str(uuid4())
+    with psycopg.connect(pg_url) as conn:
+        identity(conn, OTHER)
+        conn.execute(
+            "INSERT INTO upload_receipts(id,owner_id,kind,payload_hash,response,created_at,updated_at) VALUES (%s,%s,'roster',%s,'{}',now(),now())",
+            (identifier, OTHER, "0" * 64),
+        )
+    options = academic_year(pg_client)
+    category = "Fictional level " + str(uuid4())
+    data = (HEAD + f"{number},learner@example.com,Fictional Learner,{category},Maple\n").encode()
+    digest = preview(pg_client, options, data).json()["fingerprint"]
+    response = commit(pg_client, options, digest, data, import_id=identifier)
+    assert response.status_code == 409, response.text
+    with psycopg.connect(pg_url) as conn:
+        identity(conn, TEACHER)
+        assert (
+            conn.execute("SELECT count(*) FROM students WHERE student_number=%s", (number,)).fetchone()[0]
+            == 0
+        )
+        assert conn.execute("SELECT count(*) FROM grade_levels WHERE name=%s", (category,)).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM sections WHERE academic_year_id=%s", (options["academic_year_id"],)
+            ).fetchone()[0]
+            == 0
+        )
+        conn.rollback()
+
+
 def test_production_runtime_login_and_mfa_startup(pg_url):
     from psycopg.conninfo import conninfo_to_dict
     from sqlalchemy.engine import URL
@@ -160,8 +244,32 @@ def test_production_runtime_login_and_mfa_startup(pg_url):
     app.dependency_overrides[get_principal] = lambda: Principal(TEACHER, "aal2")
     with TestClient(app) as client:
         assert client.get("/health/ready").status_code == 200
+        # Readiness must not leak SET LOCAL ROLE into a pooled connection.
+        from sqlalchemy import text
+
+        with app.state.engine.connect() as conn:
+            assert conn.execute(text("SELECT current_user")).scalar_one() == "teachease_login"
         response = client.post("/v1/students", json={"display_name": "Fictional runtime-login test"})
         assert response.status_code == 201, response.text
+
+
+def test_postgres_readiness_detects_missing_roster_column(pg_client):
+    from sqlalchemy import text
+
+    from app.errors import DomainError
+    from app.readiness import check_production_database
+
+    # Disposable local PostgreSQL only. Roll back the simulated unapplied migration.
+    with pg_client.app.state.engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            conn.execute(text("ALTER TABLE students RENAME COLUMN email TO email_unapplied"))
+            conn.execute(text("SET LOCAL ROLE teachease_login"))
+            with pytest.raises(DomainError) as caught:
+                check_production_database(conn)
+            assert caught.value.code == "database_schema_outdated"
+        finally:
+            transaction.rollback()
 
 
 def test_postgres_consultation_and_material_provenance_edit_guard(pg_client, pg_url):

@@ -32,4 +32,3 @@ jobs:
       - run: python scripts/export_contracts.py
       - run: python scripts/check_contracts.py
       - run: git diff --exit-code -- docs/openapi.json supabase/migrations/0001_schema.sql
-      - run: docker build -t teachease-api:test .

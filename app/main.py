@@ -18,6 +18,8 @@ from app.config import Settings, get_settings
 from app.db import make_engine
 from app.errors import DomainError
 from app.models import Base
+from app.readiness import check_production_database
+from app.roster_routes import router as roster_router
 from app.routes import router
 from app.schemas import ErrorResponse
 
@@ -115,25 +117,7 @@ def create_app(settings: Settings | None = None):
         if settings.app_env == "production":
             # Fail closed if deployment accidentally uses postgres/service credentials.
             with app.state.engine.connect() as conn:
-                role = conn.execute(
-                    text(
-                        "SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user"
-                    )
-                ).one()
-                if role[0] != "teachease_login" or role[1] or role[2]:
-                    raise RuntimeError(
-                        "Production database must use the dedicated non-bypass teachease_login"
-                    )
-                conn.execute(text("SET LOCAL ROLE teachease_api"))
-                if (
-                    conn.execute(
-                        text(
-                            "SELECT count(*) FROM pg_class WHERE relname='submissions' AND relrowsecurity AND relforcerowsecurity"
-                        )
-                    ).scalar_one()
-                    != 1
-                ):
-                    raise RuntimeError("Apply the TeachEase RLS migrations before starting production")
+                check_production_database(conn)
         yield
         app.state.auth_http.close()
         app.state.engine.dispose()
@@ -154,6 +138,7 @@ def create_app(settings: Settings | None = None):
     app.state.auth_http = httpx.Client(timeout=10, follow_redirects=False)
     app.state.ai = Gemini(settings)
     app.state.ocr_slots = BoundedSemaphore(settings.max_concurrent_ocr)
+    app.state.roster_slots = BoundedSemaphore(2)
     app.add_middleware(RequestGuard, limit=settings.max_request_bytes)
     app.add_middleware(
         CORSMiddleware,
@@ -222,10 +207,14 @@ def create_app(settings: Settings | None = None):
     @app.get("/health/ready", tags=["Health"])
     def ready(request: Request) -> dict[str, str]:
         with app.state.engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+            if settings.app_env == "production":
+                check_production_database(conn)
+            else:
+                conn.execute(text("SELECT 1"))
         return {"status": "ready"}
 
     app.include_router(router)
+    app.include_router(roster_router)
     return app
 
 

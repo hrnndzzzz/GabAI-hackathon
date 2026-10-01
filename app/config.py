@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     ai_timeout_seconds: int = Field(default=45, ge=1, le=120)
     max_concurrent_ocr: int = Field(default=2, ge=1, le=4)
     max_image_bytes: int = Field(default=5 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
+    max_roster_bytes: int = Field(default=5 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
     max_image_pixels: int = Field(default=20_000_000, ge=1000, le=40_000_000)
     max_request_bytes: int = Field(default=6 * 1024 * 1024, ge=1024, le=12 * 1024 * 1024)
     db_pool_size: int = Field(default=5, ge=1, le=20)

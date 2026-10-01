@@ -15,6 +15,8 @@ flowchart TD
   API --> Validation[Pydantic contracts and ownership checks]
   Validation --> Score[Deterministic Decimal scoring]
   Validation --> Reports[Approved evidence and consultation calculations]
+  Validation --> Roster[Bounded CSV/XLSX parser and assignment preview]
+  Roster -->|Explicit confirmation; atomic import| Transaction
   Validation --> Online[Online Gemini adapter]
   Online -->|Validated images or minimized text; server key| Gemini[Google Gemini API]
   Validation --> Transaction[SQLAlchemy transaction]

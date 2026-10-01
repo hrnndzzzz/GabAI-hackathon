@@ -1,0 +1,5 @@
+student_number,student_email,student_name,grade_level,section
+000001,learner.a@example.com,Fictional Learner A,Grade 7,Orchid
+000002,learner.b@example.com,Fictional Learner B,7,Orchid
+000003,learner.c@example.com,Fictional Learner C,Grade 8,
+000004,learner.d@example.com,Fictional Learner D,Year 1,Maple
