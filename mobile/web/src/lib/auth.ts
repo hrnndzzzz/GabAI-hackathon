@@ -28,6 +28,7 @@ export function friendlyAuthError(message: string): string {
   if (/(invalid|expired).*(code|totp|challenge)|(code|totp|challenge).*(invalid|expired)/i.test(message))
     return 'That code did not work. Check the time on your phone and enter the newest code.'
   if (/fetch|network|load failed/i.test(message)) return 'Could not reach the sign-in service. Check your connection.'
+  if (/captcha/i.test(message)) return 'Complete the "I am human" check, then try again.'
   return message
 }
 
@@ -36,14 +37,28 @@ export interface SignedInUser {
   email: string
 }
 
-export async function signIn(email: string, password: string): Promise<SignedInUser> {
-  const { data, error } = await requireClient().auth.signInWithPassword({ email, password })
+export async function signIn(email: string, password: string, captchaToken?: string | null): Promise<SignedInUser> {
+  const { data, error } = await requireClient().auth.signInWithPassword({
+    email,
+    password,
+    options: captchaToken ? { captchaToken } : undefined,
+  })
   if (error) throw new Error(friendlyAuthError(error.message))
   return { id: data.user.id, email: data.user.email ?? email }
 }
 
-export async function signUp(email: string, password: string): Promise<'confirm_email' | 'signed_in'> {
-  const { data, error } = await requireClient().auth.signUp({ email, password })
+export async function signUp(
+  email: string,
+  password: string,
+  details: { fullName: string; school: string },
+  captchaToken?: string | null,
+): Promise<'confirm_email' | 'signed_in'> {
+  const { data, error } = await requireClient().auth.signUp({
+    email,
+    password,
+    // Display-only profile hints; identity and ownership always come from the verified token.
+    options: { data: { full_name: details.fullName, school: details.school }, ...(captchaToken ? { captchaToken } : {}) },
+  })
   if (error) throw new Error(friendlyAuthError(error.message))
   return data.session ? 'signed_in' : 'confirm_email'
 }
@@ -87,7 +102,7 @@ export async function startTotpEnrollment(): Promise<TotpEnrollment> {
   }
   const { data, error } = await sb.auth.mfa.enroll({
     factorType: 'totp',
-    issuer: 'GabAI EDU',
+    issuer: 'GabAI',
     friendlyName: `GabAI ${new Date().toISOString().slice(0, 16)}`,
   })
   if (error) throw new Error(friendlyAuthError(error.message))

@@ -41,3 +41,17 @@ export function initials(name: string): string {
 export function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
+
+/** "Due today, 5:00 PM", "Due Friday", "Due Oct 14", or "Overdue since …". */
+export function dueLabel(iso: string | null, now = new Date()): string | null {
+  if (!iso) return null
+  const due = new Date(iso)
+  const time = due.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  if (due.getTime() < now.getTime()) return `Overdue since ${dayLabel(iso, now)}`
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOf(due) - startOf(now)) / 86400000)
+  if (days === 0) return `Due today, ${time}`
+  if (days === 1) return `Due tomorrow, ${time}`
+  if (days < 7) return `Due ${due.toLocaleDateString('en-US', { weekday: 'long' })}`
+  return `Due ${due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+}

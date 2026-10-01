@@ -16,13 +16,13 @@ export function ToastHost() {
       {toast && (
         <div
           key={toast.id}
-          className="pointer-events-auto flex w-full max-w-sm animate-toast-in items-center gap-3 rounded-xl border-2 border-white bg-ink px-4 py-3 text-sm font-semibold text-white shadow-brut"
+          className="pointer-events-auto flex w-full max-w-sm animate-toast-in items-center gap-3 rounded-xl border-2 border-white bg-[#1a1a1a] px-4 py-3 text-sm font-semibold text-white shadow-brut"
         >
           <span className="min-w-0 flex-1">{toast.message}</span>
           {toast.action && (
             <button
               type="button"
-              className="press shrink-0 rounded-lg border-2 border-white bg-sun px-2.5 py-1 text-xs font-bold text-ink"
+              className="press shrink-0 rounded-lg border-2 border-white bg-sun px-2.5 py-1 text-xs font-bold text-[#1a1a1a]"
               onClick={() => {
                 toast.action?.()
                 dismiss()

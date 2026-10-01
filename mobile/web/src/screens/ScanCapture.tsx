@@ -1,11 +1,21 @@
-import { Camera, Image as ImageIcon, X, Zap, ZapOff } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { MonoLabel, cx } from '../components/ui'
+import { ArrowLeft, Camera, Check, ChevronDown, Image as ImageIcon, Zap, ZapOff } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { usePhotoPicker } from '../components/PhotoPicker'
+import { Sheet } from '../components/Sheet'
+import { useScanSteps } from '../components/flowSteps'
+import { MonoLabel, TONE_BG, cx } from '../components/ui'
+import { classLabel, levelTone } from '../lib/classes'
 import { setDarkChrome } from '../lib/native'
 import { demoRecognize, fileToDataUrl, renderPaperSvg } from '../lib/ocr'
-import { useStore, useWorkspace, type CaptureSource, type ScanSession } from '../store'
+import { resolvedTheme, useSettings } from '../lib/settings'
+import { expectedPapers, useStore, useWorkspace, type CaptureSource, type ScanSession } from '../store'
 
 type CamState = 'starting' | 'live' | 'unavailable'
+/** unknown until the stream reports its capabilities; none when this camera has no flash. */
+type TorchState = 'unknown' | 'none' | 'off' | 'on'
+
+// The scanner is always dark, whatever the app theme: pin ink to the light-theme value.
+const PINNED = { '--color-ink': '#1a1a1a' } as CSSProperties
 
 const PAPER = { A4: 210 / 297, Letter: 8.5 / 11 } as const
 // Transparent 1×1 GIF: hides the WebView's default play-button poster while the stream starts.
@@ -17,22 +27,32 @@ export function ScanCapture() {
   const back = useStore((s) => s.back)
   const showToast = useStore((s) => s.showToast)
 
-  const [paper, setPaper] = useState<keyof typeof PAPER>('A4')
+  const switchScan = useStore((s) => s.switchScan)
+  const steps = useScanSteps()
+  const defaultPaper = useSettings((s) => s.paperSize)
+  const [paper, setPaper] = useState<keyof typeof PAPER>(defaultPaper)
   const [cam, setCam] = useState<CamState>('starting')
   const [locked, setLocked] = useState(false)
   const [light, setLight] = useState<number | null>(null)
-  const [torch, setTorch] = useState(false)
-  const [torchSupported, setTorchSupported] = useState(false)
+  const [torch, setTorch] = useState<TorchState>('unknown')
   const [flashing, setFlashing] = useState(false)
+  const [picking, setPicking] = useState(false)
   const [box, setBox] = useState({ w: 0, h: 0 })
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const viewRef = useRef<HTMLDivElement>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const gallery = usePhotoPicker((file) =>
+    fileToDataUrl(file)
+      .then((url) => setCapture(url, 'gallery'))
+      .catch(() => showToast('That file could not be opened as an image')),
+  )
 
   const ws = useWorkspace()
   const assessment = ws.assessments.find((a) => a.id === scan.assessmentId)!
+  const section = ws.classes.find((c) => c.id === assessment.classId)
+  const graded = ws.submissions.filter((s) => s.assessmentId === assessment.id).length
+  const scannable = ws.assessments.filter((a) => a.key.questions.length)
   // The sample paper is drawn from the demo recognizer's marks so both always agree.
   const sample = useMemo(
     () =>
@@ -48,7 +68,7 @@ export function ScanCapture() {
 
   useEffect(() => {
     setDarkChrome(true)
-    return () => setDarkChrome(false)
+    return () => setDarkChrome(resolvedTheme(useSettings.getState().theme) === 'dark')
   }, [])
 
   useEffect(() => {
@@ -75,8 +95,6 @@ export function ScanCapture() {
           video.srcObject = stream
           video.play().catch(() => undefined)
         }
-        const caps = stream.getVideoTracks()[0]?.getCapabilities?.() as { torch?: boolean } | undefined
-        setTorchSupported(!!caps?.torch)
         // The viewfinder goes live on the first decoded frame (onPlaying); give up if none arrive.
         noFrames = setTimeout(() => {
           if (videoRef.current?.videoWidth) return
@@ -136,17 +154,27 @@ export function ScanCapture() {
   const frameX = (box.w - frameW) / 2
   const frameY = (box.h - frameH) / 2
 
+  // Capabilities are only reliable once frames are flowing, so check when the stream goes live.
+  useEffect(() => {
+    if (cam !== 'live') return
+    const track = streamRef.current?.getVideoTracks()[0]
+    const caps = track?.getCapabilities?.() as { torch?: boolean } | undefined
+    setTorch(caps?.torch ? 'off' : 'none')
+  }, [cam])
+
   async function toggleTorch() {
-    if (cam !== 'live' || !torchSupported) {
-      showToast(cam === 'live' ? 'This camera has no flash' : 'Flash needs the camera')
+    if (cam !== 'live') {
+      showToast('The flash needs the camera')
       return
     }
-    const next = !torch
+    if (torch === 'none' || torch === 'unknown') {
+      showToast("This camera doesn't offer a flash to apps. Move closer to a light instead.")
+      return
+    }
+    const next = torch !== 'on'
     try {
-      await streamRef.current
-        ?.getVideoTracks()[0]
-        ?.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] })
-      setTorch(next)
+      await streamRef.current?.getVideoTracks()[0]?.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] })
+      setTorch(next ? 'on' : 'off')
     } catch {
       showToast('Could not switch the flash')
     }
@@ -177,35 +205,29 @@ export function ScanCapture() {
     setTimeout(() => setCapture(image, source), 220)
   }
 
-  function onFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    fileToDataUrl(file)
-      .then((url) => setCapture(url, 'gallery'))
-      .catch(() => showToast('That file could not be opened as an image'))
-  }
-
   const lowLight = cam === 'live' && light !== null && light < 22
   const cornerColor = locked ? '#6BCB77' : '#FFD93D'
 
   return (
-    <div className="flex h-full flex-col bg-ink text-white">
+    <div className="flex h-full flex-col bg-[#141414] text-white" style={PINNED}>
       <header className="flex shrink-0 items-center gap-3 px-4 pt-3 pb-2">
         <button
           type="button"
-          aria-label="Close scanner"
+          aria-label="Back"
           onClick={() => back()}
-          className="press flex size-10 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-white text-ink shadow-[2px_2px_0_rgba(255,255,255,0.35)]"
+          className="press flex size-10 shrink-0 items-center justify-center rounded-lg border-2 border-ink bg-sun text-ink shadow-[2px_2px_0_rgba(255,255,255,0.35)]"
         >
-          <X size={19} aria-hidden />
+          <ArrowLeft size={19} aria-hidden />
         </button>
-        <div className="min-w-0 flex-1">
+        <button type="button" onClick={() => setPicking(true)} className="min-w-0 flex-1 text-left" aria-label={`Scanning ${assessment.title}. Change assessment`}>
           <MonoLabel className="text-white/70">Step 01 / 04 • Capture</MonoLabel>
-          <p className="truncate text-[15px] font-bold">
-            {assessment.title} · {assessment.classLabel}
-          </p>
-        </div>
+          <span className="flex items-center gap-1">
+            <span className="truncate text-[15px] font-bold">
+              {assessment.title} · {section ? classLabel(section) : assessment.classLabel}
+            </span>
+            <ChevronDown size={16} className="shrink-0" aria-hidden />
+          </span>
+        </button>
         <div role="radiogroup" aria-label="Paper size" className="flex shrink-0 rounded-lg border-2 border-white p-0.5">
           {(Object.keys(PAPER) as (keyof typeof PAPER)[]).map((size) => (
             <button
@@ -224,11 +246,21 @@ export function ScanCapture() {
           ))}
         </div>
       </header>
-      <div className="flex shrink-0 gap-1.5 px-4 pb-3" aria-hidden>
-        {[0, 1, 2, 3].map((i) => (
-          <span key={i} className={cx('h-2 flex-1 rounded-full border-2 border-white', i === 0 ? 'bg-sun' : 'bg-transparent')} />
+      <nav aria-label="Steps" className="flex shrink-0 gap-1.5 px-4 pb-2">
+        {steps.map((step, i) => (
+          <button
+            key={step.label}
+            type="button"
+            aria-current={i === 0 ? 'step' : undefined}
+            aria-label={`Step ${i + 1}: ${step.label}`}
+            disabled={i === 0 || !step.go}
+            onClick={step.go}
+            className="flex-1 py-1.5 disabled:cursor-default"
+          >
+            <span className={cx('block h-2 rounded-full border-2 border-white', i === 0 ? 'bg-sun' : step.go ? 'bg-white/40' : 'bg-transparent')} />
+          </button>
         ))}
-      </div>
+      </nav>
 
       <div ref={viewRef} className="relative mx-4 min-h-0 flex-1 overflow-hidden rounded-2xl border-2 border-white bg-[#2b2b2b]">
         <video
@@ -306,9 +338,14 @@ export function ScanCapture() {
           </span>
         </div>
 
-        <span className="absolute bottom-3 left-3 rounded-lg border-2 border-ink bg-white px-2 py-1 font-mono text-[10px] font-bold text-ink">
-          {scan.paperNumber ? `PAPER ${scan.paperNumber} OF ${scan.paperCount}` : `${assessment.key.questions.length} ITEMS`}
-        </span>
+        <button
+          type="button"
+          onClick={() => setPicking(true)}
+          className="absolute bottom-3 left-3 rounded-lg border-2 border-ink bg-white px-2 py-1 text-left font-mono text-[10px] font-bold text-ink"
+        >
+          {scan.paperCount ? `PAPER ${scan.paperNumber} OF ${scan.paperCount}` : `PAPER ${scan.paperNumber ?? 1}`} • {assessment.key.questions.length} ITEMS
+          {scan.student && <span className="block max-w-[180px] truncate font-sans text-[11px] normal-case">{scan.student}</span>}
+        </button>
         {flashing && <div className="absolute inset-0 animate-flash bg-white" />}
       </div>
 
@@ -322,9 +359,10 @@ export function ScanCapture() {
 
       <div className="flex shrink-0 items-end justify-between px-8 pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
         <SideAction
-          label={torch ? 'Flash on' : 'Flash'}
-          icon={torch ? Zap : ZapOff}
-          active={torch}
+          label={torch === 'on' ? 'Flash on' : torch === 'off' ? 'Flash off' : 'No flash'}
+          icon={torch === 'on' ? Zap : ZapOff}
+          active={torch === 'on'}
+          muted={torch === 'none' || cam !== 'live'}
           onClick={toggleTorch}
         />
         <button
@@ -338,9 +376,42 @@ export function ScanCapture() {
             <Camera size={28} strokeWidth={2.25} aria-hidden />
           </span>
         </button>
-        <SideAction label="Gallery" icon={ImageIcon} onClick={() => fileRef.current?.click()} />
+        <SideAction label="Gallery" icon={ImageIcon} onClick={gallery.pick} />
       </div>
-      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+      {gallery.element}
+      {picking && (
+        <Sheet title="Which assessment are you scanning?" subtitle={`${graded} of ${expectedPapers(ws, assessment) || '?'} graded for this one`} onClose={() => setPicking(false)}>
+          <ul className="space-y-2">
+            {scannable.map((a) => {
+              const c = ws.classes.find((x) => x.id === a.classId)
+              const done = ws.submissions.filter((s) => s.assessmentId === a.id).length
+              const expected = expectedPapers(ws, a)
+              const current = a.id === assessment.id
+              return (
+                <li key={a.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!current) switchScan(a.id)
+                      setPicking(false)
+                    }}
+                    className={cx('press flex w-full items-center gap-3 rounded-lg border-2 border-ink px-3 py-2.5 text-left shadow-brut-sm', current ? 'bg-sun' : 'bg-surface')}
+                  >
+                    <span className={cx('size-3 shrink-0 rounded-full border-2 border-ink', TONE_BG[c ? levelTone(c.level) : 'white'])} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-bold">{a.title}</span>
+                      <MonoLabel className="truncate text-subtle">
+                        {c ? classLabel(c) : a.classLabel} • {expected ? `${done} of ${expected} graded` : `${done} graded`}
+                      </MonoLabel>
+                    </span>
+                    {current && <Check size={18} aria-hidden />}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </Sheet>
+      )}
     </div>
   )
 }
@@ -349,19 +420,21 @@ function SideAction({
   label,
   icon: Icon,
   active,
+  muted,
   onClick,
 }: {
   label: string
   icon: typeof Camera
   active?: boolean
+  muted?: boolean
   onClick: () => void
 }) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={active} className="flex w-14 flex-col items-center gap-1.5">
+    <button type="button" onClick={onClick} aria-pressed={active} className="flex w-16 flex-col items-center gap-1.5">
       <span
         className={cx(
           'press flex size-12 items-center justify-center rounded-xl border-2 border-ink text-ink shadow-[2px_2px_0_rgba(255,255,255,0.35)]',
-          active ? 'bg-sun' : 'bg-white',
+          active ? 'bg-sun' : muted ? 'bg-white/45' : 'bg-white',
         )}
       >
         <Icon size={21} aria-hidden />

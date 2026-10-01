@@ -42,6 +42,16 @@ gabai.supabasePublishableKey=your-publishable-key
 The same values can come from `GABAI_API_BASE_URL`, `GABAI_SUPABASE_URL` and
 `GABAI_SUPABASE_PUBLISHABLE_KEY`. The publishable key is public by design.
 
+If CAPTCHA protection is on in Supabase Auth (Cloudflare Turnstile), also add the
+public site key, and allow the hostname `appassets.androidplatform.net` for that key
+in the Cloudflare dashboard. Sign-in and registration then show the check:
+
+```properties
+gabai.captchaSiteKey=your-turnstile-site-key
+```
+
+The Turnstile secret key goes in Supabase (Authentication → Attack Protection), never here.
+
 On the backend, allow the WebView origin, and the dev server's origin if you use it:
 
 ```bash

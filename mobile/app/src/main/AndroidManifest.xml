@@ -4,6 +4,9 @@
     <!-- Online OCR, AI drafts and result uploads; grading itself works offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Short buzz when an exam timer ends and when a badge preview opens. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Live viewfinder for paper capture; the app still works without a camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature

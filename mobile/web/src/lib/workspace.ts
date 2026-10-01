@@ -1,4 +1,7 @@
 import type { AssessmentCreate, OfflineSubmission } from './api'
+import type { AvatarSpec } from './avatar'
+import type { CalendarEvent } from './calendar'
+import type { TeacherClass } from './classes'
 import type { Draft } from './lessons'
 import { scorePercent, toHundredths, type Adjustment, type Answer, type KeyQuestion, type Score } from './scoring'
 
@@ -20,15 +23,18 @@ export interface LocalKey {
 export interface LocalAssessment {
   id: string
   title: string
+  /** The section this assessment was given to (null for older or downloaded data without one). */
+  classId: string | null
   classLabel: string
   assessmentDate: string
+  /** When papers are due; results approved after this count as late. */
+  dueISO: string | null
   key: LocalKey
   /** Device-only topic names per question, used to word feedback. Never uploaded. */
   topics: Record<number, string>
   /** Demo papers waiting to be scanned, in order. */
   roster: string[]
   urgent: boolean
-  due: string | null
   origin: Origin
   sync: SyncState
   syncError?: string
@@ -38,6 +44,7 @@ export interface LocalAssessment {
 export interface LocalSubmission {
   id: string
   assessmentId: string
+  classId: string | null
   keyId: string
   keyVersion: number | null
   studentLabel: string
@@ -73,8 +80,19 @@ export type OutboxItem =
   | (OutboxBase & { kind: 'assessment'; payload: AssessmentCreate })
   | (OutboxBase & { kind: 'submission'; assessmentId: string; payload: OfflineSubmission })
 
+export interface TeacherProfile {
+  fullName: string
+  school: string
+  avatar: AvatarSpec
+}
+
 export interface Workspace {
   displayName: string
+  profile: TeacherProfile | null
+  /** Sections the teacher handles, with rosters. */
+  classes: TeacherClass[]
+  events: CalendarEvent[]
+  dismissedNotifications: string[]
   assessments: LocalAssessment[]
   submissions: LocalSubmission[]
   modules: SavedModule[]
@@ -88,6 +106,10 @@ export interface Workspace {
 export function emptyWorkspace(displayName: string): Workspace {
   return {
     displayName,
+    profile: null,
+    classes: [],
+    events: [],
+    dismissedNotifications: [],
     assessments: [],
     submissions: [],
     modules: [],
@@ -102,7 +124,9 @@ export function emptyWorkspace(displayName: string): Workspace {
 export interface RecordRow {
   id: string
   student: string
+  classId: string | null
   classLabel: string
+  assessmentId: string | null
   assessment: string
   finalScore: string
   possibleScore: string
@@ -111,13 +135,17 @@ export interface RecordRow {
   missed: number[]
   feedback: string
   sync: SyncState
+  /** Approved after the assessment's due time. */
+  late: boolean
 }
 
-export function submissionRow(s: LocalSubmission): RecordRow {
+export function submissionRow(s: LocalSubmission, assessment?: LocalAssessment): RecordRow {
   return {
     id: s.id,
     student: s.studentLabel,
+    classId: s.classId ?? assessment?.classId ?? null,
     classLabel: s.classLabel,
+    assessmentId: s.assessmentId,
     assessment: s.assessmentTitle,
     finalScore: s.score.final_score,
     possibleScore: s.score.possible_score,
@@ -126,6 +154,7 @@ export function submissionRow(s: LocalSubmission): RecordRow {
     missed: missedNumbers(s.score),
     feedback: s.feedback,
     sync: s.sync,
+    late: !!assessment?.dueISO && Date.parse(s.approvedISO) > Date.parse(assessment.dueISO),
   }
 }
 

@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.gabai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2.0"
 
         buildConfigField("String", "API_BASE_URL", "\"${setting("gabai.apiBaseUrl", "GABAI_API_BASE_URL")}\"")
         buildConfigField("String", "SUPABASE_URL", "\"${setting("gabai.supabaseUrl", "GABAI_SUPABASE_URL")}\"")
@@ -32,6 +32,8 @@ android {
             "SUPABASE_PUBLISHABLE_KEY",
             "\"${setting("gabai.supabasePublishableKey", "GABAI_SUPABASE_PUBLISHABLE_KEY")}\"",
         )
+        // Cloudflare Turnstile site key (public), only when CAPTCHA protection is on in Supabase Auth.
+        buildConfigField("String", "CAPTCHA_SITE_KEY", "\"${setting("gabai.captchaSiteKey", "GABAI_CAPTCHA_SITE_KEY")}\"")
     }
 
     buildFeatures {

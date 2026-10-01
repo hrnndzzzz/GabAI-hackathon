@@ -237,6 +237,7 @@ async function allPages<T>(path: string, maxPages = 10): Promise<T[]> {
 
 export const api = {
   me: () => send<ProfileOut>('GET', '/me'),
+  updateMe: (displayName: string) => send<ProfileOut>('PUT', '/me', { json: { display_name: displayName.slice(0, 120) } }),
   listAssessments: () => allPages<AssessmentOut>('/assessments'),
   uploadAssessment: (assessment: AssessmentCreate) =>
     send<UploadOut>('POST', '/uploads/assessments', { json: { assessment, key_teacher_verified: true } }),
@@ -258,6 +259,18 @@ export const api = {
     send<MaterialOut>('PATCH', `/materials/${id}`, { json: { expected_revision: expectedRevision, content } }),
   reviewMaterial: (id: string, expectedRevision: number) =>
     send<MaterialOut>('POST', `/materials/${id}/review`, { json: { confirmed: true, expected_revision: expectedRevision } }),
+}
+
+/** Public liveness check (no token), for About → server status. */
+export async function serverHealth(): Promise<{ status: string; version?: string } | null> {
+  const config = getConfig()
+  if (!config) return null
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/health`)
+    return response.ok ? ((await response.json()) as { status: string; version?: string }) : null
+  } catch {
+    return null
+  }
 }
 
 /** One plain sentence for a toast or inline error. */

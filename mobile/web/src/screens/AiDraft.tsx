@@ -1,12 +1,13 @@
-import { BadgeCheck, Check, ChevronDown, Download, Languages, ListPlus, LoaderCircle, Lock, Pencil, Printer, Save, WandSparkles, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, Check, ChevronDown, Eye, Languages, ListPlus, LoaderCircle, Lock, Pencil, Save, WandSparkles, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { FlowFooter, FlowHeader } from '../components/FlowHeader'
+import { useAiSteps } from '../components/flowSteps'
 import { Markdown } from '../components/Markdown'
 import { Badge, BrutalistButton, BrutalistCard, MonoLabel, TONE_BG, accentVariant, cx, type Tone } from '../components/ui'
-import { FORMATS, TIERS, draftToCsv, draftToHtml, draftToMarkdown, slugify, type Draft, type DraftSection, type Refinement } from '../lib/lessons'
+import { draftFile } from '../lib/exports'
+import { FORMATS, TIERS, type Draft, type DraftSection, type Refinement } from '../lib/lessons'
 import { LEVELS, gradeLabel, levelOf } from '../lib/levels'
 import { modeLabel } from '../lib/materials'
-import { printHtml, shareTextFile } from '../lib/native'
 import { useStore, useWorkspace } from '../store'
 
 const REFINEMENTS: { id: Refinement; label: string; icon: LucideIcon; done: string }[] = [
@@ -23,6 +24,10 @@ export function AiDraft() {
   const refineDraft = useStore((s) => s.refine)
   const ws = useWorkspace()
   const showToast = useStore((s) => s.showToast)
+  const openPreview = useStore((s) => s.openPreview)
+  const resetTo = useStore((s) => s.resetTo)
+  const back = useStore((s) => s.back)
+  const steps = useAiSteps()
   const [open, setOpen] = useState<string[]>(() => (draft.sections[0] ? [draft.sections[0].id] : []))
   const [busy, setBusy] = useState<Refinement | 'save' | 'review' | null>(null)
 
@@ -62,24 +67,26 @@ export function AiDraft() {
     }, online ? `${r.done}. Save to keep it on the server.` : r.done)
   }
 
-  function exportDraft() {
-    const name = slugify(draft.title)
-    if (draft.format === 'pdf') {
-      printHtml(draft.title, draftToHtml(draft))
-      showToast('Opening the print dialog. Choose “Save as PDF”.')
-    } else if (draft.format === 'markdown') {
-      shareTextFile(`${name}.md`, 'text/markdown', draftToMarkdown(draft))
-      showToast(`Exported ${name}.md`)
-    } else {
-      shareTextFile(`${name}.csv`, 'text/csv', draftToCsv(draft))
-      showToast(`Exported ${name}.csv for LMS import`)
+  async function done() {
+    if (!isSaved) {
+      setBusy('save')
+      try {
+        await saveModule()
+      } catch (error) {
+        setBusy(null)
+        showToast(error instanceof Error ? error.message : 'Could not save the module')
+        return
+      }
+      setBusy(null)
+      showToast('Saved to AI Teaching Modules')
     }
+    resetTo(['hub'])
   }
 
   const provenance = draft.material?.provenance
   return (
     <div className="flex h-full flex-col">
-      <FlowHeader step={3} total={3} label="Draft & refine" title="Review your draft" tone={tone} />
+      <FlowHeader step={3} total={3} label="Draft & refine" title="Review your draft" tone={tone} steps={steps} onDone={() => void done()} />
       <main className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
         <BrutalistCard color={tone} className="p-3">
           <label htmlFor="draft-title" className="block">
@@ -92,7 +99,7 @@ export function AiDraft() {
             value={draft.title}
             maxLength={200}
             onChange={(e) => update({ ...draft, title: e.target.value })}
-            className="mt-1.5 w-full rounded-lg border-2 border-ink bg-white px-2.5 py-2 text-[15px] leading-snug font-extrabold outline-none focus:shadow-brut"
+            className="mt-1.5 w-full rounded-lg border-2 border-ink bg-surface px-2.5 py-2 text-[15px] leading-snug font-extrabold outline-none focus:shadow-brut"
           />
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             <Badge mono>{gradeLabel(levelOf(draft), draft.grade)}</Badge>
@@ -138,7 +145,7 @@ export function AiDraft() {
                     onClick={() => refine(r)}
                     className={cx(
                       'press inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border-2 border-ink px-2.5 text-xs font-bold whitespace-nowrap shadow-brut-sm',
-                      applied ? cx(TONE_BG[tone], 'disabled:shadow-none') : 'bg-white disabled:opacity-60',
+                      applied ? cx(TONE_BG[tone], 'disabled:shadow-none') : 'bg-surface disabled:opacity-60',
                     )}
                   >
                     <Icon size={14} strokeWidth={2.5} className={cx(busy === r.id && 'animate-spin')} aria-hidden />
@@ -150,12 +157,14 @@ export function AiDraft() {
           </div>
         }
       >
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-[auto_1fr_1fr] gap-2.5">
+          <BrutalistButton variant="secondary" icon={ArrowLeft} aria-label="Previous step" onClick={() => back()} className="px-3" />
           {online && isSaved ? (
             <BrutalistButton
               variant="secondary"
               icon={busy === 'review' ? LoaderCircle : BadgeCheck}
               disabled={reviewed || !!busy}
+              className="px-2 text-[13px] whitespace-nowrap"
               onClick={() => void run('review', markReviewed, 'Marked as reviewed')}
             >
               {reviewed ? 'Reviewed' : 'Mark reviewed'}
@@ -165,13 +174,14 @@ export function AiDraft() {
               variant="secondary"
               icon={busy === 'save' ? LoaderCircle : isSaved ? Check : Save}
               disabled={isSaved || !!busy}
+              className="px-2 text-[13px] whitespace-nowrap"
               onClick={() => void run('save', saveModule, online ? 'Saved • review status reset to draft' : saved ? 'Module updated' : 'Saved to AI Teaching Modules')}
             >
-              {isSaved ? 'Saved' : online || saved ? 'Save changes' : 'Save module'}
+              {isSaved ? 'Saved' : online || saved ? 'Save edits' : 'Save'}
             </BrutalistButton>
           )}
-          <BrutalistButton variant={accentVariant(tone)} icon={draft.format === 'pdf' ? Printer : Download} onClick={exportDraft}>
-            Export {draft.format === 'pdf' ? 'PDF' : draft.format === 'markdown' ? '.md' : 'CSV'}
+          <BrutalistButton variant={accentVariant(tone)} icon={Eye} className="px-2 text-[13px] whitespace-nowrap" onClick={() => openPreview(draftFile(draft))}>
+            Preview {draft.format === 'pdf' ? 'PDF' : draft.format === 'markdown' ? '.md' : 'CSV'}
           </BrutalistButton>
         </div>
       </FlowFooter>
@@ -226,7 +236,7 @@ function SectionCard({
           }}
           className={cx(
             'press flex h-8 shrink-0 items-center gap-1 rounded-md border-2 border-ink px-2 text-[11px] font-bold shadow-brut-sm',
-            editing ? 'bg-ink text-white' : 'bg-white',
+            editing ? 'bg-ink text-surface' : 'bg-surface',
           )}
         >
           {editing ? <Check size={13} aria-hidden /> : <Pencil size={13} aria-hidden />}

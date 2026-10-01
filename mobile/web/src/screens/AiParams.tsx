@@ -1,6 +1,7 @@
 import { ArrowRight, Backpack, BookOpen, CircleHelp, ClipboardCheck, GraduationCap, LifeBuoy, School, type LucideIcon } from 'lucide-react'
 import { useState, type CSSProperties } from 'react'
-import { FlowFooter, FlowHeader } from '../components/FlowHeader'
+import { FlowFooter, FlowHeader, StepButtons } from '../components/FlowHeader'
+import { useAiSteps } from '../components/flowSteps'
 import { BrutalistButton, IconTile, MonoLabel, SectionTitle, TONE_BG, TONE_HEX, accentVariant, cx } from '../components/ui'
 import { MODES, suggestedObjectives, type Mode } from '../lib/lessons'
 import {
@@ -30,6 +31,8 @@ export function AiParams() {
   const params = useStore((s) => s.aiParams)
   const setAiParams = useStore((s) => s.setAiParams)
   const navigate = useStore((s) => s.navigate)
+  const back = useStore((s) => s.back)
+  const steps = useAiSteps()
   const connected = useStore((s) => isConnected(s.session))
   const level = levelOf(params)
   const info = LEVELS[level]
@@ -60,7 +63,7 @@ export function AiParams() {
 
   return (
     <div className="flex h-full flex-col">
-      <FlowHeader step={1} total={3} label="Lesson parameters" title="What are you teaching?" tone={tone} />
+      <FlowHeader step={1} total={3} label="Lesson parameters" title="What are you teaching?" tone={tone} steps={steps} />
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <section>
           <SectionTitle>School level</SectionTitle>
@@ -77,10 +80,10 @@ export function AiParams() {
                   onClick={() => !on && retarget(id, defaultGrade(id))}
                   className={cx(
                     'press flex flex-col items-start gap-1.5 rounded-xl border-2 border-ink p-2.5 text-left',
-                    on ? cx(TONE_BG[LEVELS[id].tone], 'shadow-brut') : 'bg-white shadow-brut-sm',
+                    on ? cx(TONE_BG[LEVELS[id].tone], 'shadow-brut') : 'bg-surface shadow-brut-sm',
                   )}
                 >
-                  <span className={cx('flex size-8 items-center justify-center rounded-lg border-2 border-ink', on ? 'bg-white' : TONE_BG[LEVELS[id].tone])}>
+                  <span className={cx('flex size-8 items-center justify-center rounded-lg border-2 border-ink', on ? 'bg-surface' : TONE_BG[LEVELS[id].tone])}>
                     <Icon size={17} aria-hidden />
                   </span>
                   <span className="text-[13px] leading-tight font-extrabold">{LEVELS[id].label}</span>
@@ -95,7 +98,7 @@ export function AiParams() {
           <SectionTitle aside={<span className="font-mono text-sm font-extrabold">{gradeLabel(level, params.grade)}</span>}>
             {level === 'college' ? 'Year level' : 'Grade level'}
           </SectionTitle>
-          <div className="rounded-xl border-2 border-ink bg-white px-4 pt-5 pb-3 shadow-brut-sm">
+          <div className="rounded-xl border-2 border-ink bg-surface px-4 pt-5 pb-3 shadow-brut-sm">
             <input
               type="range"
               min={0}
@@ -146,7 +149,7 @@ export function AiParams() {
                   }}
                   className={cx(
                     'press h-9 rounded-lg border-2 border-ink px-3 text-[13px] font-bold shadow-brut-sm',
-                    on ? cx(TONE_BG[tone], 'shadow-brut') : 'bg-white',
+                    on ? cx(TONE_BG[tone], 'shadow-brut') : 'bg-surface',
                   )}
                 >
                   {subject}
@@ -163,7 +166,7 @@ export function AiParams() {
               }}
               className={cx(
                 'press h-9 rounded-lg border-2 border-dashed border-ink px-3 text-[13px] font-bold shadow-brut-sm',
-                isOther ? TONE_BG[tone] : 'bg-white',
+                isOther ? TONE_BG[tone] : 'bg-surface',
               )}
             >
               Other…
@@ -177,7 +180,7 @@ export function AiParams() {
               maxLength={80}
               aria-label="Other subject"
               autoFocus
-              className="mt-2 h-11 w-full rounded-lg border-2 border-ink bg-white px-3 text-[15px] font-semibold outline-none focus:shadow-brut"
+              className="mt-2 h-11 w-full rounded-lg border-2 border-ink bg-surface px-3 text-[15px] font-semibold outline-none focus:shadow-brut"
             />
           )}
         </section>
@@ -192,7 +195,7 @@ export function AiParams() {
             value={params.topic}
             onChange={(e) => setAiParams({ topic: e.target.value })}
             placeholder="What is the lesson about?"
-            className="w-full resize-none rounded-xl border-2 border-ink bg-white p-3 text-[15px] font-semibold shadow-brut-sm outline-none focus:shadow-brut"
+            className="w-full resize-none rounded-xl border-2 border-ink bg-surface p-3 text-[15px] font-semibold shadow-brut-sm outline-none focus:shadow-brut"
           />
           {suggestions.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
@@ -206,7 +209,7 @@ export function AiParams() {
                   }}
                   className={cx(
                     'press rounded-lg border-2 border-ink px-2.5 py-1 text-xs font-bold shadow-brut-sm',
-                    params.topic === s.topic ? TONE_BG[tone] : 'bg-white',
+                    params.topic === s.topic ? TONE_BG[tone] : 'bg-surface',
                   )}
                 >
                   {s.topic}
@@ -227,7 +230,7 @@ export function AiParams() {
             value={params.objectives}
             onChange={(e) => setAiParams({ objectives: e.target.value })}
             placeholder="e.g. Describe the stages of the water cycle"
-            className="w-full resize-none rounded-xl border-2 border-ink bg-white p-3 text-[13.5px] leading-snug shadow-brut-sm outline-none [field-sizing:content] focus:shadow-brut"
+            className="w-full resize-none rounded-xl border-2 border-ink bg-surface p-3 text-[13.5px] leading-snug shadow-brut-sm outline-none [field-sizing:content] focus:shadow-brut"
           />
         </section>
 
@@ -245,7 +248,7 @@ export function AiParams() {
                   onClick={() => setAiParams({ mode })}
                   className={cx(
                     'press flex flex-col items-start gap-2 rounded-xl border-2 border-ink p-3 text-left',
-                    on ? cx(TONE_BG[tone], 'shadow-brut') : 'bg-white shadow-brut-sm',
+                    on ? cx(TONE_BG[tone], 'shadow-brut') : 'bg-surface shadow-brut-sm',
                   )}
                 >
                   <IconTile icon={MODE_ICONS[mode]} size={34} tone={on ? 'white' : 'canvas'} />
@@ -261,16 +264,18 @@ export function AiParams() {
         </MonoLabel>
       </main>
       <FlowFooter>
-        <BrutalistButton
-          variant={accentVariant(tone)}
-          size="lg"
-          className="w-full"
-          iconRight={ArrowRight}
-          disabled={!params.topic.trim() || !params.subject.trim() || (connected && objectives.length === 0)}
-          onClick={() => navigate('ai-format')}
-        >
-          Choose Format
-        </BrutalistButton>
+        <StepButtons onBack={() => back()}>
+          <BrutalistButton
+            variant={accentVariant(tone)}
+            size="lg"
+            className="w-full"
+            iconRight={ArrowRight}
+            disabled={!params.topic.trim() || !params.subject.trim() || (connected && objectives.length === 0)}
+            onClick={() => navigate('ai-format')}
+          >
+            Choose Format
+          </BrutalistButton>
+        </StepButtons>
       </FlowFooter>
     </div>
   )

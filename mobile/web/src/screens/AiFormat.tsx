@@ -1,6 +1,7 @@
 import { CircleCheck, Feather, FileCode2, FileText, Layers, LoaderCircle, Sheet, Sparkles, TrendingUp, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { FlowFooter, FlowHeader } from '../components/FlowHeader'
+import { FlowFooter, FlowHeader, StepButtons } from '../components/FlowHeader'
+import { useAiSteps } from '../components/flowSteps'
 import { BrutalistButton, BrutalistCard, ChoiceCard, IconTile, MonoLabel, SectionTitle, accentVariant, cx } from '../components/ui'
 import { useBackHandler } from '../lib/back'
 import { LEVELS, gradeLabel, levelOf } from '../lib/levels'
@@ -16,6 +17,8 @@ export function AiFormat() {
   const setAiParams = useStore((s) => s.setAiParams)
   const generateDraft = useStore((s) => s.generate)
   const navigate = useStore((s) => s.navigate)
+  const back = useStore((s) => s.back)
+  const stepLinks = useAiSteps()
   const connected = useStore((s) => isConnected(s.session))
   const tone = LEVELS[levelOf(params)].tone
   const [stage, setStage] = useState<number | null>(null)
@@ -74,7 +77,7 @@ export function AiFormat() {
 
   return (
     <div className="relative flex h-full flex-col">
-      <FlowHeader step={2} total={3} label="Format & tiers" title="Shape the output" tone={tone} />
+      <FlowHeader step={2} total={3} label="Format & tiers" title="Shape the output" tone={tone} steps={stepLinks} />
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <BrutalistCard color={tone} shadow="sm" className="flex items-center gap-3 p-3">
           <IconTile icon={ModeIcon} size={38} />
@@ -130,13 +133,15 @@ export function AiFormat() {
           ) : null
         }
       >
-        <BrutalistButton variant={accentVariant(tone)} size="lg" className="w-full" icon={Sparkles} onClick={generate} disabled={stage !== null}>
-          Generate Draft
-        </BrutalistButton>
+        <StepButtons onBack={() => back()}>
+          <BrutalistButton variant={accentVariant(tone)} size="lg" className="w-full" icon={Sparkles} onClick={generate} disabled={stage !== null}>
+            Generate Draft
+          </BrutalistButton>
+        </StepButtons>
       </FlowFooter>
 
       {stage !== null && (
-        <div className="absolute inset-0 z-40 flex items-end bg-ink/45 p-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+        <div className="absolute inset-0 z-40 flex items-end bg-black/50 p-4 pb-[max(16px,env(safe-area-inset-bottom))]">
           <BrutalistCard shadow="lg" className="w-full animate-toast-in p-4" role="status" aria-live="polite">
             <div className="flex items-center gap-3">
               <IconTile icon={Sparkles} tone={tone} size={40} />

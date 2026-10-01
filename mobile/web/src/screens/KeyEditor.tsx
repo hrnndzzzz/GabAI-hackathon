@@ -1,11 +1,14 @@
-import { ArrowLeft, Camera, Check, LoaderCircle, Minus, Plus } from 'lucide-react'
-import { useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
-import { FlowFooter } from '../components/FlowHeader'
-import { BrutalistButton, BrutalistCard, IconButton, MonoLabel, SectionTitle, cx } from '../components/ui'
+import { Camera, Check, LoaderCircle, Minus, Plus } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { ClassPicker, ClassSheet } from '../components/ClassFields'
+import { FlowFooter, ScreenHeader } from '../components/FlowHeader'
+import { usePhotoPicker } from '../components/PhotoPicker'
+import { BrutalistButton, BrutalistCard, IconButton, MonoLabel, SectionTitle, Switch, cx } from '../components/ui'
+import { sortClasses } from '../lib/classes'
+import type { Level } from '../lib/levels'
 import { fileToDataUrl, toJpegBlob } from '../lib/ocr'
-import { classLabels } from '../lib/records'
 import { formatHundredths, normalize, toHundredths, type KeyQuestion } from '../lib/scoring'
-import { todayISODate } from '../lib/workspace'
+import { localIsoWithOffset, todayISODate } from '../lib/workspace'
 import { isConnected, useStore, useWorkspace } from '../store'
 
 const CHOICES = ['A', 'B', 'C', 'D']
@@ -26,12 +29,16 @@ export function KeyEditor() {
   const resetTo = useStore((s) => s.resetTo)
   const beginScan = useStore((s) => s.beginScan)
   const showToast = useStore((s) => s.showToast)
+  const upsertClass = useStore((s) => s.upsertClass)
   const connected = isConnected(session)
-  const labels = classLabels(ws, !connected)
 
   const [title, setTitle] = useState('')
-  const [classLabel, setClassLabel] = useState(labels[0] ?? '')
+  const [classId, setClassId] = useState<string | null>(() => sortClasses(ws.classes)[0]?.id ?? null)
+  const [addingSection, setAddingSection] = useState<{ level: Level; grade: number } | null>(null)
   const [date, setDate] = useState(todayISODate())
+  const [hasDue, setHasDue] = useState(false)
+  const [dueDate, setDueDate] = useState(todayISODate())
+  const [dueTime, setDueTime] = useState('17:00')
   const [mcCount, setMcCount] = useState(20)
   const [tfCount, setTfCount] = useState(5)
   const [mcPoints, setMcPoints] = useState('1.00')
@@ -39,7 +46,7 @@ export function KeyEditor() {
   const [answers, setAnswers] = useState<Record<number, string>>({})
   const [checked, setChecked] = useState(false)
   const [reading, setReading] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const photo = usePhotoPicker((file) => void onPhoto(file))
 
   const questions = useMemo<KeyQuestion[]>(() => {
     const list: KeyQuestion[] = []
@@ -60,7 +67,7 @@ export function KeyEditor() {
   const total = formatHundredths(questions.reduce((s, q) => s + toHundredths(q.points), 0)).replace('.00', '')
   const problems = [
     !title.trim() && 'a title',
-    !classLabel.trim() && 'a class',
+    !classId && 'a section',
     !date && 'a date',
     !questions.length && 'at least one question',
     (mcCount && !validPoints(mcPoints)) || (tfCount && !validPoints(tfPoints)) ? 'valid points' : false,
@@ -73,10 +80,7 @@ export function KeyEditor() {
     setChecked(false)
   }
 
-  async function onPhoto(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+  async function onPhoto(file: File) {
     setReading(true)
     try {
       const found = await readReferenceKey(await toJpegBlob(await fileToDataUrl(file)))
@@ -102,8 +106,15 @@ export function KeyEditor() {
   }
 
   function save(scan: boolean) {
-    if (!ready) return
-    const a = saveAssessment({ title, classLabel, assessmentDate: date, questions })
+    if (!ready || !classId) return
+    const due = hasDue ? new Date(`${dueDate}T${dueTime || '23:59'}:00`) : null
+    const a = saveAssessment({
+      title,
+      classId,
+      assessmentDate: date,
+      dueISO: due && !Number.isNaN(due.getTime()) ? localIsoWithOffset(due) : null,
+      questions,
+    })
     showToast(connected ? `Saved ${a.title} • key verified, uploading` : `Saved ${a.title} on this device`)
     if (scan) {
       resetTo(['hub'])
@@ -115,49 +126,34 @@ export function KeyEditor() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="shrink-0 border-b-2 border-ink bg-canvas px-4 pt-3 pb-3">
-        <div className="flex items-center gap-3">
-          <IconButton label="Back" icon={ArrowLeft} onClick={() => back()} />
-          <div className="min-w-0 flex-1">
-            <MonoLabel className="text-subtle">Answer key • {connected ? 'uploads when saved' : 'saved on device'}</MonoLabel>
-            <h1 className="truncate text-[17px] leading-tight font-extrabold">New assessment</h1>
-          </div>
-          <span className="h-10 w-2.5 rounded-full border-2 border-ink bg-sun" aria-hidden />
-        </div>
-      </header>
+      <ScreenHeader label={`Answer key • ${connected ? 'uploads when saved' : 'saved on this phone'}`} title="New assessment" tone="yellow" />
 
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <BrutalistCard className="space-y-3 p-3">
           <TextField label="Title" value={title} onChange={setTitle} placeholder="e.g. Bio Quiz 5" maxLength={200} />
           <div>
-            <TextField label="Class" value={classLabel} onChange={setClassLabel} placeholder="e.g. G9 Bio · Sampaguita" maxLength={80} />
-            {labels.length > 0 && (
-              <div className="no-scrollbar -mx-3 mt-2 flex gap-1.5 overflow-x-auto px-3">
-                {labels.map((label) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => setClassLabel(label)}
-                    className={cx(
-                      'h-7 shrink-0 rounded-md border-2 border-ink px-2 text-[11.5px] font-bold whitespace-nowrap',
-                      classLabel === label ? 'bg-sun' : 'bg-white',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <span className="mb-1 block text-[13px] font-bold">Section</span>
+            <ClassPicker classes={ws.classes} value={classId} onChange={setClassId} onAddSection={setAddingSection} />
           </div>
           <label className="block">
             <span className="mb-1 block text-[13px] font-bold">Date given</span>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="h-11 w-full rounded-lg border-2 border-ink bg-white px-3 text-[15px] outline-none focus:shadow-brut"
-            />
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={DATE_INPUT} />
           </label>
+          <div className="rounded-lg border-2 border-ink bg-surface">
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span>
+                <span className="block text-[13px] font-bold">Due date</span>
+                <span className="block text-xs text-subtle">Papers approved after this are marked late.</span>
+              </span>
+              <Switch checked={hasDue} label="Set a due date" onChange={setHasDue} />
+            </div>
+            {hasDue && (
+              <div className="grid grid-cols-2 gap-2 border-t-2 border-ink/15 p-2">
+                <input type="date" aria-label="Due date" value={dueDate} min={date} onChange={(e) => setDueDate(e.target.value)} className={DATE_INPUT} />
+                <input type="time" aria-label="Due time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} className={DATE_INPUT} />
+              </div>
+            )}
+          </div>
         </BrutalistCard>
 
         <section>
@@ -176,11 +172,11 @@ export function KeyEditor() {
             className="mb-3 w-full"
             icon={reading ? LoaderCircle : Camera}
             disabled={!connected || reading}
-            onClick={() => fileRef.current?.click()}
+            onClick={photo.pick}
           >
             {reading ? 'Reading the key…' : connected ? 'Fill from a photo of the key (online)' : 'Photo fill needs a GabAI account'}
           </BrutalistButton>
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPhoto} />
+          {photo.element}
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
             {questions.map((q) => {
               const options = q.kind === 'true_false' ? ['TRUE', 'FALSE'] : CHOICES
@@ -197,7 +193,7 @@ export function KeyEditor() {
                       onClick={() => setAnswer(q.number, o)}
                       className={cx(
                         'h-8 flex-1 rounded-md border-2 border-ink font-mono text-[12px] font-bold',
-                        q.correct_answer === o ? 'bg-ink text-white' : 'bg-white',
+                        q.correct_answer === o ? 'bg-ink text-surface' : 'bg-surface',
                       )}
                     >
                       {q.kind === 'true_false' ? o[0] : o}
@@ -241,9 +237,22 @@ export function KeyEditor() {
           </BrutalistButton>
         </div>
       </FlowFooter>
+      {addingSection && (
+        <ClassSheet
+          defaults={addingSection}
+          onClose={() => setAddingSection(null)}
+          onSave={(c) => {
+            upsertClass(c)
+            setClassId(c.id)
+            setAddingSection(null)
+          }}
+        />
+      )}
     </div>
   )
 }
+
+const DATE_INPUT = 'h-11 w-full rounded-lg border-2 border-ink bg-surface px-3 text-[15px] outline-none focus:shadow-brut'
 
 function TextField({
   label,
@@ -266,7 +275,7 @@ function TextField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         maxLength={maxLength}
-        className="h-11 w-full rounded-lg border-2 border-ink bg-white px-3 text-[15px] font-semibold outline-none focus:shadow-brut"
+        className="h-11 w-full rounded-lg border-2 border-ink bg-surface px-3 text-[15px] font-semibold outline-none focus:shadow-brut"
       />
     </label>
   )
@@ -303,7 +312,7 @@ function CountRow({
           onChange={(e) => setPoints(e.target.value)}
           aria-label={`Points per ${label} question`}
           aria-invalid={bad}
-          className={cx('h-8 w-14 rounded-md border-2 border-ink px-1.5 text-center font-mono text-[12px] font-bold outline-none', bad ? 'bg-coral/20' : 'bg-white')}
+          className={cx('h-8 w-14 rounded-md border-2 border-ink px-1.5 text-center font-mono text-[12px] font-bold outline-none', bad ? 'bg-coral/20' : 'bg-surface')}
         />
         <span className="font-mono text-[10px] font-bold text-subtle">PTS</span>
       </label>

@@ -1,6 +1,8 @@
 import { ArrowRight, Check, CircleHelp, KeyRound, ServerCog, TriangleAlert, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { FlowFooter, FlowHeader } from '../components/FlowHeader'
+import { ClassPicker } from '../components/ClassFields'
+import { FlowFooter, FlowHeader, StepButtons } from '../components/FlowHeader'
+import { useScanSteps } from '../components/flowSteps'
 import { Badge, BrutalistButton, BrutalistCard, ChoiceCard, MonoLabel, ProgressBar, SectionTitle, cx } from '../components/ui'
 import { api, describeError } from '../lib/api'
 import { useBackHandler } from '../lib/back'
@@ -16,13 +18,14 @@ export function ScanMatch() {
   const connected = useStore((s) => isConnected(s.session))
   const setScanAssessment = useStore((s) => s.setScanAssessment)
   const navigate = useStore((s) => s.navigate)
+  const back = useStore((s) => s.back)
+  const steps = useScanSteps()
   const [editing, setEditing] = useState<number | null>(null)
   const [check, setCheck] = useState<{ state: 'idle' | 'busy' | 'ok' | 'error'; message?: string }>({ state: 'idle' })
 
   const assessment = ws.assessments.find((a) => a.id === scan.assessmentId)!
-  const labels = [...new Set(ws.assessments.map((a) => a.classLabel))]
-  const [classLabel, setClassLabel] = useState(assessment.classLabel)
-  const inClass = ws.assessments.filter((a) => a.classLabel === classLabel)
+  const [classId, setClassId] = useState<string | null>(assessment.classId)
+  const inClass = ws.assessments.filter((a) => a.key.questions.length && (classId ? a.classId === classId : !a.classId))
   const questions = assessment.key.questions
   const score = scoreScan(scan, assessment)
   const percent = scorePercent(score)
@@ -53,31 +56,20 @@ export function ScanMatch() {
 
   return (
     <div className="relative flex h-full flex-col">
-      <FlowHeader step={3} total={4} label="Key matching" title="Match the answer key" tone="yellow" />
+      <FlowHeader step={3} total={4} label="Key matching" title="Match the answer key" tone="yellow" steps={steps} />
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <section>
           <SectionTitle>Course & section</SectionTitle>
-          <div role="radiogroup" aria-label="Class" className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-            {labels.map((label) => (
-              <button
-                key={label}
-                type="button"
-                role="radio"
-                aria-checked={classLabel === label}
-                onClick={() => setClassLabel(label)}
-                className={cx(
-                  'press h-9 shrink-0 rounded-lg border-2 border-ink px-3 text-[13px] font-bold whitespace-nowrap shadow-brut-sm',
-                  classLabel === label ? 'bg-sun' : 'bg-white',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <ClassPicker classes={ws.classes} value={classId} onChange={setClassId} />
         </section>
 
         <section>
           <SectionTitle>Answer key</SectionTitle>
+          {inClass.length === 0 && (
+            <p className="rounded-xl border-2 border-dashed border-ink/40 px-3 py-4 text-center text-[13px] text-subtle">
+              No answer key for this section yet. Pick another section, or create one from Quick Assessments.
+            </p>
+          )}
           <div role="radiogroup" aria-label="Assessment and answer key" className="space-y-2">
             {inClass.map((a) => (
               <ChoiceCard
@@ -187,9 +179,11 @@ export function ScanMatch() {
         </section>
       </main>
       <FlowFooter>
-        <BrutalistButton variant="yellow" size="lg" className="w-full" iconRight={ArrowRight} onClick={() => navigate('scan-review')}>
-          Review & Approve
-        </BrutalistButton>
+        <StepButtons onBack={() => back()}>
+          <BrutalistButton variant="yellow" size="lg" className="w-full" iconRight={ArrowRight} onClick={() => navigate('scan-review')}>
+            Review & Approve
+          </BrutalistButton>
+        </StepButtons>
       </FlowFooter>
 
       {editing !== null && (
@@ -213,7 +207,7 @@ function PointBox({ item, onClick }: { item: ItemScore; onClick: () => void }) {
       aria-label={`Question ${item.number}: ${item.resolved ? `${item.final_score} of ${item.possible_score}` : 'unresolved'}${adjusted ? ', adjusted' : ''}`}
       className={cx(
         'relative flex h-14 flex-col items-center justify-center rounded-md border-2 border-ink',
-        !item.resolved ? 'bg-sun/60' : full ? 'bg-white' : 'bg-coral/30',
+        !item.resolved ? 'bg-sun/60' : full ? 'bg-surface' : 'bg-coral/30',
         adjusted && 'border-dashed',
       )}
     >
@@ -247,7 +241,7 @@ function AdjustSheet({ question, item, onClose }: { question: KeyQuestion; item:
   const reasonOk = reason.trim().length >= 3
 
   return (
-    <div className="absolute inset-0 z-40 flex items-end bg-ink/45" onClick={onClose}>
+    <div className="absolute inset-0 z-40 flex items-end bg-black/50" onClick={onClose}>
       <BrutalistCard shadow="lg" className="m-3 w-full animate-toast-in p-4" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`Adjust question ${question.number}`}>
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -273,7 +267,7 @@ function AdjustSheet({ question, item, onClose }: { question: KeyQuestion; item:
                 inputMode="decimal"
                 value={score}
                 onChange={(e) => setScore(e.target.value)}
-                className="h-11 w-full rounded-lg border-2 border-ink bg-white px-3 font-mono text-[16px] font-bold outline-none focus:shadow-brut"
+                className="h-11 w-full rounded-lg border-2 border-ink bg-surface px-3 font-mono text-[16px] font-bold outline-none focus:shadow-brut"
               />
             </label>
             <label className="mt-3 block">
@@ -284,7 +278,7 @@ function AdjustSheet({ question, item, onClose }: { question: KeyQuestion; item:
                 maxLength={2000}
                 rows={2}
                 placeholder="e.g. Accepted an alternate correct reading of the question"
-                className="w-full resize-none rounded-lg border-2 border-ink bg-white p-2.5 text-[13.5px] outline-none focus:shadow-brut"
+                className="w-full resize-none rounded-lg border-2 border-ink bg-surface p-2.5 text-[13.5px] outline-none focus:shadow-brut"
               />
             </label>
             <div className="mt-3 grid grid-cols-2 gap-2.5">

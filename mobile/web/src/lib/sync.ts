@@ -90,8 +90,11 @@ export function assessmentFromServer(a: AssessmentOut): LocalAssessment | null {
   return {
     id: a.id,
     title: a.title,
+    // Linked to a section when merged into the workspace (matched by label).
+    classId: null,
     classLabel: a.category || 'Unassigned class',
     assessmentDate: a.assessment_date,
+    dueISO: null,
     key: {
       id: key.id,
       version: key.version,
@@ -109,7 +112,6 @@ export function assessmentFromServer(a: AssessmentOut): LocalAssessment | null {
     topics: {},
     roster: [],
     urgent: false,
-    due: null,
     origin: 'server',
     sync: 'synced',
     createdISO: a.created_at,
@@ -121,6 +123,7 @@ export function submissionFromServer(s: SubmissionOut, assessments: LocalAssessm
   return {
     id: s.id,
     assessmentId: s.assessment_id,
+    classId: assessment?.classId ?? null,
     keyId: s.answer_key_id,
     keyVersion: s.score.answer_key_version,
     studentLabel: s.student_label,

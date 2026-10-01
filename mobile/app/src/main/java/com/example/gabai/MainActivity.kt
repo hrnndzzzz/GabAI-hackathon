@@ -6,11 +6,13 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -22,6 +24,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -48,7 +51,8 @@ class MainActivity : AppCompatActivity() {
             .build()
     }
 
-    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    // The system photo picker hands over only the photo the teacher chooses: no storage permission needed.
+    private val pickImage = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         fileCallback?.onReceiveValue(uri?.let { arrayOf(it) })
         fileCallback = null
     }
@@ -68,7 +72,10 @@ class MainActivity : AppCompatActivity() {
         webView = WebView(this)
         root.addView(webView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         setContentView(root)
-        setDarkChrome(false)
+        // Until the page reports its theme, start from the last one it chose (or the system's).
+        val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        themeDark = getPreferences(MODE_PRIVATE).getBoolean(PREF_DARK, systemDark)
+        setDarkChrome(themeDark)
 
         // Edge-to-edge: keep the page clear of the status bar, navigation bar, cutout and keyboard.
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
@@ -114,7 +121,13 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode =
                 if (debuggable) WebSettings.MIXED_CONTENT_ALWAYS_ALLOW else WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
-        webView.setBackgroundColor(CANVAS)
+        // Cloudflare Turnstile (the sign-in CAPTCHA) runs in a challenges.cloudflare.com frame and
+        // fails in a retry loop unless that frame may keep cookies. Android blocks them by default.
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(webView, true)
+        }
+        webView.setBackgroundColor(if (themeDark) DARK_CANVAS else CANVAS)
         webView.overScrollMode = View.OVER_SCROLL_NEVER
         webView.addJavascriptInterface(NativeBridge(this), "GabAINative")
 
@@ -123,7 +136,8 @@ class MainActivity : AppCompatActivity() {
                 assetLoader.shouldInterceptRequest(request.url)
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (request.url.host == APP_HOST) return false
+                // Embedded frames (the CAPTCHA widget) load in place; the bridge is only on the main frame.
+                if (request.url.host == APP_HOST || !request.isForMainFrame) return false
                 // Anything off-app opens in the browser so the bridge is never exposed to it.
                 try {
                     startActivity(Intent(Intent.ACTION_VIEW, request.url))
@@ -163,7 +177,7 @@ class MainActivity : AppCompatActivity() {
                 fileCallback?.onReceiveValue(null)
                 fileCallback = callback
                 return try {
-                    pickImage.launch("image/*")
+                    pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     true
                 } catch (_: ActivityNotFoundException) {
                     fileCallback = null
@@ -173,13 +187,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Matches the system bars to the page: dark for the camera viewfinder, light elsewhere. */
+    private var themeDark = false
+
+    /** Matches the system bars to the page: dark for the camera viewfinder and the dark theme. */
     fun setDarkChrome(dark: Boolean) {
-        root.setBackgroundColor(if (dark) INK else CANVAS)
+        root.setBackgroundColor(if (dark) DARK_CANVAS else CANVAS)
         WindowInsetsControllerCompat(window, root).apply {
             isAppearanceLightStatusBars = !dark
             isAppearanceLightNavigationBars = !dark
         }
+    }
+
+    /** The page's light/dark theme: applied now and remembered for the next launch. */
+    fun setThemeChrome(dark: Boolean) {
+        themeDark = dark
+        getPreferences(MODE_PRIVATE).edit().putBoolean(PREF_DARK, dark).apply()
+        webView.setBackgroundColor(if (dark) DARK_CANVAS else CANVAS)
+        setDarkChrome(dark)
     }
 
     override fun onDestroy() {
@@ -191,7 +215,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val APP_HOST = WebViewAssetLoader.DEFAULT_DOMAIN
         const val START_URL = "https://$APP_HOST/assets/www/index.html"
+        private const val PREF_DARK = "theme_dark"
         private val CANVAS = Color.parseColor("#F8F9FA")
-        private val INK = Color.parseColor("#1A1A1A")
+        private val DARK_CANVAS = Color.parseColor("#121417")
     }
 }

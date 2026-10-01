@@ -6,6 +6,8 @@ export interface AppConfig {
   apiBaseUrl: string
   supabaseUrl: string
   supabasePublishableKey: string
+  /** Optional Cloudflare Turnstile site key; set when Supabase CAPTCHA protection is on. */
+  captchaSiteKey?: string
 }
 
 let cached: AppConfig | null | undefined
@@ -25,5 +27,13 @@ export function getConfig(): AppConfig | null {
     supabasePublishableKey: native.supabasePublishableKey || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
   }
   cached = config.apiBaseUrl && config.supabaseUrl && config.supabasePublishableKey ? config : null
+  captchaKey = native.captchaSiteKey || import.meta.env.VITE_CAPTCHA_SITE_KEY || ''
   return cached
+}
+
+let captchaKey = ''
+
+export function getCaptchaSiteKey(): string {
+  getConfig()
+  return captchaKey
 }

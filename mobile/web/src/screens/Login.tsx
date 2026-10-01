@@ -1,12 +1,14 @@
-import { ArrowRight, AtSign, Eye, EyeOff, KeyRound, WifiOff } from 'lucide-react'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { ArrowRight, AtSign, Eye, EyeOff, KeyRound, UserPlus, WifiOff } from 'lucide-react'
+import { useCallback, useState, type FormEvent, type ReactNode } from 'react'
+import { Captcha } from '../components/Captcha'
 import { LogoMark } from '../components/Logo'
 import { MfaPanel } from '../components/MfaPanel'
 import { BrutalistButton, BrutalistCard, MonoLabel, cx } from '../components/ui'
 import { ApiError, api, describeError } from '../lib/api'
-import { mfaState, signIn, signOut, signUp, type SignedInUser } from '../lib/auth'
-import { getConfig } from '../lib/config'
+import { mfaState, signIn, signOut, type SignedInUser } from '../lib/auth'
+import { getCaptchaSiteKey, getConfig } from '../lib/config'
 import { DEMO_TEACHER } from '../lib/mock'
+import { APP_VERSION } from './Settings'
 import { useStore } from '../store'
 
 type Phase = 'form' | 'mfa' | 'busy'
@@ -14,15 +16,19 @@ type Phase = 'form' | 'mfa' | 'busy'
 export function Login() {
   const enterDemo = useStore((s) => s.enterDemo)
   const enterConnected = useStore((s) => s.enterConnected)
+  const setAuthView = useStore((s) => s.setAuthView)
   const online = getConfig() !== null
-  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in')
+  const needsCaptcha = !!getCaptchaSiteKey()
   const [phase, setPhase] = useState<Phase>('form')
   const [user, setUser] = useState<SignedInUser | null>(null)
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => useStore.getState().authEmail)
+  const [captcha, setCaptcha] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const onToken = useCallback((t: string | null) => setCaptcha(t), [])
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({})
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(() => (useStore.getState().authEmail ? 'Your account is ready. Sign in to continue.' : null))
 
   async function complete(signedIn: SignedInUser) {
     // display_name defaults to "Teacher" until the profile is edited.
@@ -57,27 +63,20 @@ export function Login() {
     e.preventDefault()
     const next: typeof errors = {}
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) next.email = 'Enter your school email address.'
-    if (password.length < (mode === 'sign-up' ? 8 : 1)) {
-      next.password = mode === 'sign-up' ? 'Use at least 8 characters.' : 'Enter your password.'
-    }
+    if (!password) next.password = 'Enter your password.'
+    if (needsCaptcha && !captcha) next.form = 'Complete the "I am human" check first.'
     setErrors(next)
     setNotice(null)
     if (Object.keys(next).length) return
     setPhase('busy')
     try {
-      if (mode === 'sign-up') {
-        const result = await signUp(email.trim(), password)
-        if (result === 'confirm_email') {
-          setNotice('Check your inbox to confirm your email, then sign in.')
-          setMode('sign-in')
-          setPhase('form')
-          return
-        }
-      }
-      await afterPassword(await signIn(email.trim(), password))
+      await afterPassword(await signIn(email.trim(), password, captcha))
     } catch (error) {
       setErrors({ form: describeError(error) })
       setPhase('form')
+      // Each CAPTCHA token works once; a failed sign-in needs a fresh check.
+      setCaptcha(null)
+      setAttempt((n) => n + 1)
     }
   }
 
@@ -133,7 +132,7 @@ export function Login() {
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    autoComplete={mode === 'sign-up' ? 'new-password' : 'current-password'}
+                    autoComplete="current-password"
                     placeholder="Password"
                     aria-invalid={!!errors.password}
                     className="min-w-0 flex-1 bg-transparent text-[15px] outline-none"
@@ -149,6 +148,7 @@ export function Login() {
                 </>
               }
             />
+            {needsCaptcha && <Captcha key={attempt} onToken={onToken} />}
             {errors.form && (
               <p role="alert" className="rounded-lg border-2 border-ink bg-coral/25 px-3 py-2 text-[13px] font-semibold">
                 {errors.form}
@@ -160,18 +160,8 @@ export function Login() {
               </p>
             )}
             <BrutalistButton type="submit" size="lg" className="w-full" iconRight={ArrowRight} disabled={phase === 'busy'}>
-              {phase === 'busy' ? 'Signing in…' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
+              {phase === 'busy' ? 'Signing in…' : 'Sign in'}
             </BrutalistButton>
-            <button
-              type="button"
-              onClick={() => {
-                setMode((m) => (m === 'sign-in' ? 'sign-up' : 'sign-in'))
-                setErrors({})
-              }}
-              className="w-full text-center text-[13px] font-bold underline underline-offset-2"
-            >
-              {mode === 'sign-in' ? 'New teacher? Create an account' : 'Have an account? Sign in'}
-            </button>
           </form>
         </BrutalistCard>
       ) : (
@@ -180,6 +170,21 @@ export function Login() {
           <p className="mt-1 text-subtle">You can still try every screen in the offline demo below.</p>
         </BrutalistCard>
       )}
+
+      <button
+        type="button"
+        onClick={() => setAuthView('register')}
+        className="press mt-3 flex w-full items-center gap-3 rounded-xl border-2 border-ink bg-surface p-3 text-left shadow-brut-sm"
+      >
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-brand">
+          <UserPlus size={20} aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-bold">New teacher? Create an account</span>
+          <span className="block text-xs text-subtle">Your school, sections and profile picture</span>
+        </span>
+        <ArrowRight size={20} aria-hidden />
+      </button>
 
       <div className="my-5 flex items-center gap-3" aria-hidden>
         <span className="h-0.5 flex-1 bg-ink/15" />
@@ -192,7 +197,7 @@ export function Login() {
         onClick={enterDemo}
         className="press flex w-full items-center gap-3 rounded-xl border-2 border-ink bg-sun p-3 text-left shadow-brut"
       >
-        <span className="flex size-11 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-white text-sm font-extrabold">
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-surface text-sm font-extrabold">
           {DEMO_TEACHER.initials}
         </span>
         <span className="min-w-0 flex-1">
@@ -212,18 +217,13 @@ function Shell({ children }: { children: ReactNode }) {
     <div className="flex h-full flex-col overflow-y-auto px-5 pt-10 pb-[max(20px,env(safe-area-inset-bottom))]">
       <div className="flex flex-col items-center text-center">
         <LogoMark size={72} />
-        <div className="mt-4 flex items-center gap-2">
-          <span className="text-[30px] leading-none font-extrabold tracking-tight">GabAI</span>
-          <span className="rounded-lg border-2 border-ink bg-brand px-2 py-0.5 font-mono text-xs font-bold tracking-widest shadow-brut-sm">
-            EDU
-          </span>
-        </div>
+        <span className="mt-4 text-[30px] leading-none font-extrabold tracking-tight">GabAI</span>
         <p className="mt-3 max-w-[280px] text-sm leading-snug text-subtle">
           Instant paper grading and AI lesson design for teachers.
         </p>
       </div>
       <div className="mt-8">{children}</div>
-      <MonoLabel className="mt-auto pt-8 text-center text-subtle">v1.1 • scoring-v1</MonoLabel>
+      <MonoLabel className="mt-auto pt-8 text-center text-subtle">v{APP_VERSION} • scoring-v1</MonoLabel>
     </div>
   )
 }
@@ -248,7 +248,7 @@ function Field({
       </label>
       <div
         className={cx(
-          'flex h-12 items-center gap-2.5 rounded-lg border-2 border-ink bg-white px-3 focus-within:shadow-brut',
+          'flex h-12 items-center gap-2.5 rounded-lg border-2 border-ink bg-surface px-3 focus-within:shadow-brut',
           error && 'bg-coral/10',
         )}
       >

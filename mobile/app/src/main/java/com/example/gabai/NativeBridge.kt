@@ -29,6 +29,7 @@ class NativeBridge(private val activity: MainActivity) {
             .put("apiBaseUrl", BuildConfig.API_BASE_URL)
             .put("supabaseUrl", BuildConfig.SUPABASE_URL)
             .put("supabasePublishableKey", BuildConfig.SUPABASE_PUBLISHABLE_KEY)
+            .put("captchaSiteKey", BuildConfig.CAPTCHA_SITE_KEY)
             .toString()
 
     @JavascriptInterface
@@ -44,6 +45,11 @@ class NativeBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun setDarkChrome(dark: Boolean) {
         activity.runOnUiThread { activity.setDarkChrome(dark) }
+    }
+
+    @JavascriptInterface
+    fun setTheme(dark: Boolean) {
+        activity.runOnUiThread { activity.setThemeChrome(dark) }
     }
 
     private fun share(fileName: String, mimeType: String, content: String) {

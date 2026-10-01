@@ -1,10 +1,11 @@
-import { Check, PenLine, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Check, PenLine, TriangleAlert } from 'lucide-react'
 import { FlowFooter, FlowHeader } from '../components/FlowHeader'
+import { useScanSteps } from '../components/flowSteps'
 import { Badge, BrutalistButton, BrutalistCard, MonoLabel, ProgressBar, cx } from '../components/ui'
 import { capitalize, initials } from '../lib/format'
 import { buildFeedback, descriptor, formatPercent, type FeedbackOptions } from '../lib/grading'
 import { displayScore, scorePercent, toHundredths } from '../lib/scoring'
-import { awaitingFor, isConnected, scoreScan, useStore, useWorkspace, type ScanSession } from '../store'
+import { isConnected, scoreScan, useStore, useWorkspace, type ScanSession } from '../store'
 import { BADGE_FOR_TONE } from './ScanMatch'
 
 const SUGGESTIONS: { key: keyof FeedbackOptions; label: string }[] = [
@@ -25,6 +26,8 @@ export function ScanReview() {
   const resetTo = useStore((s) => s.resetTo)
   const back = useStore((s) => s.back)
   const showToast = useStore((s) => s.showToast)
+  const openRecords = useStore((s) => s.openRecords)
+  const steps = useScanSteps()
 
   const assessment = ws.assessments.find((a) => a.id === scan.assessmentId)!
   const score = scoreScan(scan, assessment)
@@ -41,7 +44,7 @@ export function ScanReview() {
       `${score.unresolved_numbers.length} ${score.unresolved_numbers.length === 1 ? 'answer needs' : 'answers need'} confirming (Q${score.unresolved_numbers.slice(0, 5).join(', Q')}${score.unresolved_numbers.length > 5 ? '…' : ''})`,
     nameMissing && 'the student name is empty',
   ].filter(Boolean) as string[]
-  const leftAfter = assessment.roster.length ? Math.max(0, awaitingFor(ws, assessment) - 1) : null
+  const leftAfter = scan.paperCount && scan.paperNumber ? Math.max(0, scan.paperCount - scan.paperNumber) : null
 
   function toggleSuggestion(k: keyof FeedbackOptions) {
     const prevText = scan.feedback
@@ -72,18 +75,19 @@ export function ScanReview() {
       beginScan(assessment.id, { resetStack: true })
       showToast(`Approved ${saved.studentLabel} • ${displayScore(saved.score.final_score)}/${displayScore(saved.score.possible_score)}, ${where}`)
     } else {
-      resetTo(['hub', 'records'])
+      resetTo(['hub'])
+      openRecords(assessment.classId)
       showToast(`Approved ${saved.studentLabel} • ${where}`)
     }
   }
 
   return (
     <div className="flex h-full flex-col">
-      <FlowHeader step={4} total={4} label="Review & approve" title="Approve the grade" tone="yellow" />
+      <FlowHeader step={4} total={4} label="Review & approve" title="Approve the grade" tone="yellow" steps={steps} />
       <main className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         <BrutalistCard shadow="lg" className="overflow-hidden">
           <div className="flex items-center gap-3 border-b-2 border-ink bg-sun p-3">
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-white font-extrabold">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-ink bg-surface font-extrabold">
               {initials(scan.student) || '?'}
             </span>
             <div className="min-w-0 flex-1">
@@ -154,7 +158,7 @@ export function ScanReview() {
               value={text}
               onChange={(e) => setFeedback(e.target.value)}
               aria-label={`Feedback for ${scan.student}`}
-              className="min-h-32 w-full resize-none rounded-lg border-2 border-ink bg-white p-3 text-[13.5px] leading-relaxed outline-none [field-sizing:content] focus:shadow-brut"
+              className="min-h-32 w-full resize-none rounded-lg border-2 border-ink bg-surface p-3 text-[13.5px] leading-relaxed outline-none [field-sizing:content] focus:shadow-brut"
             />
             <MonoLabel className="mt-3 mb-2 text-subtle">One-tap suggestions</MonoLabel>
             <div className="flex flex-wrap gap-2">
@@ -168,7 +172,7 @@ export function ScanReview() {
                     onClick={() => toggleSuggestion(s.key)}
                     className={cx(
                       'press inline-flex h-8 items-center gap-1.5 rounded-lg border-2 border-ink px-2.5 text-xs font-bold shadow-brut-sm',
-                      on ? 'bg-sun' : 'bg-white',
+                      on ? 'bg-sun' : 'bg-surface',
                     )}
                   >
                     {on && <Check size={13} strokeWidth={3} aria-hidden />}
@@ -188,7 +192,8 @@ export function ScanReview() {
           </MonoLabel>
         }
       >
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-[auto_1fr_1fr] gap-2.5">
+          <BrutalistButton size="lg" variant="secondary" icon={ArrowLeft} aria-label="Previous step" onClick={() => back()} className="px-3" />
           <BrutalistButton variant="yellow" size="lg" className="px-2 text-[13.5px] whitespace-nowrap" disabled={blockers.length > 0} onClick={() => approve('scan')}>
             {leftAfter === 0 ? 'Approve & Finish' : 'Approve & Next'}
           </BrutalistButton>

@@ -1,0 +1,4 @@
+<resources>
+    <!-- Matches the web app's dark canvas so launch doesn't flash white. -->
+    <color name="canvas">#121417</color>
+</resources>

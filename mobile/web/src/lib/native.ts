@@ -6,6 +6,8 @@ interface NativeBridge {
   shareFile(fileName: string, mimeType: string, content: string): void
   printHtml(jobName: string, html: string): void
   setDarkChrome(dark: boolean): void
+  /** Newer shells: also remembers the theme so the next launch starts in it. */
+  setTheme?(dark: boolean): void
 }
 
 declare global {
@@ -49,5 +51,15 @@ export function printHtml(jobName: string, html: string): void {
 
 export function setDarkChrome(dark: boolean): void {
   window.GabAINative?.setDarkChrome(dark)
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#1A1A1A' : '#F8F9FA')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#121417' : '#F8F9FA')
+}
+
+/** The app theme (not a single dark screen like the scanner). */
+export function setThemeChrome(dark: boolean): void {
+  if (window.GabAINative?.setTheme) {
+    window.GabAINative.setTheme(dark)
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#121417' : '#F8F9FA')
+  } else {
+    setDarkChrome(dark)
+  }
 }

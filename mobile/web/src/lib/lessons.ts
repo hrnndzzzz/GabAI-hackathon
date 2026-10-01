@@ -480,7 +480,7 @@ function metaLine(draft: Draft): string {
 
 export function draftToMarkdown(draft: Draft): string {
   const body = draft.sections.map((s) => `## ${s.title}\n\n${s.body}`).join('\n\n')
-  return `# ${draft.title}\n\n_${metaLine(draft)}_\n\n${body}\n\n---\nGenerated with GabAI EDU · Edge AI\n`
+  return `# ${draft.title}\n\n_${metaLine(draft)}_\n\n${body}\n\n---\nGenerated with GabAI\n`
 }
 
 function csvCell(value: string | number): string {
@@ -516,7 +516,7 @@ h2{font-size:15px;border-bottom:2px solid #1a1a1a;padding-bottom:4px;margin:20px
 ul,ol{padding-left:20px;margin:6px 0}li{margin:3px 0}.sub{color:#444}
 .note{border-left:4px solid #6bcb77;background:#effaf0;padding:6px 10px;margin:8px 0}
 footer{margin-top:28px;font-family:monospace;font-size:10px;color:#555}section{break-inside:avoid}
-</style></head><body><header><h1>${esc(draft.title)}</h1><div class="meta">${esc(metaLine(draft))}</div></header>${sections}<footer>Generated with GabAI EDU · Edge AI</footer></body></html>`
+</style></head><body><header><h1>${esc(draft.title)}</h1><div class="meta">${esc(metaLine(draft))}</div></header>${sections}<footer>Generated with GabAI</footer></body></html>`
 }
 
 export function slugify(text: string): string {

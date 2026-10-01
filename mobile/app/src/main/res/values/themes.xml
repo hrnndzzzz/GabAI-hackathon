@@ -1,6 +1,7 @@
 <resources>
-    <!-- NoActionBar: the web app draws its own top bar. -->
-    <style name="Theme.GabAI" parent="Theme.AppCompat.Light.NoActionBar">
+    <!-- NoActionBar: the web app draws its own top bar. DayNight so the WebView reports the
+         system's dark mode to the page (prefers-color-scheme) when the theme is "System". -->
+    <style name="Theme.GabAI" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/canvas</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>

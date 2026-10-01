@@ -122,7 +122,7 @@ export function MfaPanel({ onDone, onCancel }: { onDone: () => void; onCancel: (
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
             placeholder="000000"
-            className="h-12 w-full rounded-lg border-2 border-ink bg-white px-3 text-center font-mono text-[22px] font-bold tracking-[0.4em] outline-none focus:shadow-brut"
+            className="h-12 w-full rounded-lg border-2 border-ink bg-surface px-3 text-center font-mono text-[22px] font-bold tracking-[0.4em] outline-none focus:shadow-brut"
           />
           {error && <p className="mt-1.5 text-xs font-semibold text-alert-ink">{error}</p>}
           <BrutalistButton type="submit" size="lg" variant="green" className="mt-3 w-full" disabled={busy}>

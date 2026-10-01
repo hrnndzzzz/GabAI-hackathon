@@ -1,6 +1,7 @@
 import { ArrowRight, Check, CheckCheck, CloudUpload, Keyboard, LoaderCircle, PenLine, RotateCcw, TriangleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { FlowFooter, FlowHeader } from '../components/FlowHeader'
+import { FlowFooter, FlowHeader, StepButtons } from '../components/FlowHeader'
+import { useScanSteps } from '../components/flowSteps'
 import { Badge, BrutalistButton, BrutalistCard, MonoLabel, SectionTitle, cx } from '../components/ui'
 import { normalize, type Answer, type KeyQuestion } from '../lib/scoring'
 import { useStore, useWorkspace, type ScanSession } from '../store'
@@ -34,6 +35,8 @@ export function ScanOcr() {
   const scan = useStore((s) => s.scan) as ScanSession
   const ws = useWorkspace()
   const navigate = useStore((s) => s.navigate)
+  const back = useStore((s) => s.back)
+  const steps = useScanSteps()
   const setScanStudent = useStore((s) => s.setScanStudent)
   const runOnlineOcr = useStore((s) => s.runOnlineOcr)
   const startManualEntry = useStore((s) => s.startManualEntry)
@@ -62,7 +65,7 @@ export function ScanOcr() {
 
   return (
     <div className="flex h-full flex-col">
-      <FlowHeader step={2} total={4} label="OCR extraction" title="Check the answers" tone="yellow" />
+      <FlowHeader step={2} total={4} label="OCR extraction" title="Check the answers" tone="yellow" steps={steps} />
       <main className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         <BrutalistCard className="overflow-hidden">
           <div className="flex items-center justify-between gap-2 border-b-2 border-ink px-3 py-2">
@@ -72,7 +75,7 @@ export function ScanOcr() {
             </MonoLabel>
           </div>
           <div className="relative flex justify-center bg-line/70 p-3">
-            {scan.image && <img src={scan.image} alt="Captured answer sheet" className="max-h-52 rounded-md border-2 border-ink bg-white object-contain" />}
+            {scan.image && <img src={scan.image} alt="Captured answer sheet" className="max-h-52 rounded-md border-2 border-ink bg-surface object-contain" />}
             {(!revealed || scan.ocr.status === 'running') && (
               <span className="absolute inset-x-6 h-0.5 animate-scan bg-brand shadow-[0_0_10px_#4D96FF]" />
             )}
@@ -161,7 +164,7 @@ export function ScanOcr() {
                 placeholder="Type the name on the paper"
                 className={cx(
                   'mt-1.5 h-11 w-full rounded-lg border-2 border-ink px-3 text-[15px] font-bold outline-none focus:shadow-brut',
-                  scan.student.trim() ? 'bg-white' : 'bg-sun/30',
+                  scan.student.trim() ? 'bg-surface' : 'bg-sun/30',
                 )}
               />
               <MonoLabel className="mt-2 text-subtle">Section: {assessment.classLabel}</MonoLabel>
@@ -190,7 +193,7 @@ export function ScanOcr() {
               </div>
               <div className="mt-2 flex flex-wrap gap-3 font-mono text-[10px] font-semibold text-subtle">
                 <Legend className="border-ink bg-sun" label="NEEDS REVIEW" />
-                <Legend className="border-dashed border-ink/50 bg-white" label="RECOGNIZED" />
+                <Legend className="border-dashed border-ink/50 bg-surface" label="RECOGNIZED" />
                 <Legend className="border-ink bg-mint" label="CONFIRMED" />
               </div>
             </section>
@@ -217,9 +220,11 @@ export function ScanOcr() {
           ) : null
         }
       >
-        <BrutalistButton variant="yellow" size="lg" className="w-full" iconRight={ArrowRight} disabled={!done} onClick={() => navigate('scan-match')}>
-          Match Answer Key
-        </BrutalistButton>
+        <StepButtons onBack={() => back()}>
+          <BrutalistButton variant="yellow" size="lg" className="w-full" iconRight={ArrowRight} disabled={!done} onClick={() => navigate('scan-match')}>
+            Match Answer Key
+          </BrutalistButton>
+        </StepButtons>
       </FlowFooter>
     </div>
   )
@@ -251,7 +256,7 @@ function RegionBox({ q, answer, status, selected, onSelect }: { q: KeyQuestion; 
       aria-label={`Question ${q.number}: ${value}, ${STATE_LABEL[answer?.state ?? 'missing']}`}
       className={cx(
         'relative flex h-11 items-center justify-center rounded-md border-2 px-1',
-        status === 'review' ? 'border-ink bg-sun' : status === 'confirmed' ? 'border-ink bg-mint' : 'border-dashed border-ink/50 bg-white',
+        status === 'review' ? 'border-ink bg-sun' : status === 'confirmed' ? 'border-ink bg-mint' : 'border-dashed border-ink/50 bg-surface',
         selected && 'outline-3 outline-offset-1 outline-brand',
       )}
     >
@@ -278,7 +283,7 @@ function ReviewItem({ q, answer }: { q: KeyQuestion; answer: Answer | undefined 
   }
 
   return (
-    <li className="rounded-xl border-2 border-ink bg-white p-3 shadow-brut-sm">
+    <li className="rounded-xl border-2 border-ink bg-surface p-3 shadow-brut-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 text-sm font-bold">
           Q{q.number}{' '}
@@ -301,7 +306,7 @@ function ReviewItem({ q, answer }: { q: KeyQuestion; answer: Answer | undefined 
             value={value === 'BLANK' ? '' : value}
             onChange={(e) => setValue(e.target.value)}
             aria-label={`Answer for question ${q.number}`}
-            className="h-10 min-w-0 flex-1 rounded-lg border-2 border-ink bg-white px-3 text-[14px] font-semibold outline-none focus:shadow-brut"
+            className="h-10 min-w-0 flex-1 rounded-lg border-2 border-ink bg-surface px-3 text-[14px] font-semibold outline-none focus:shadow-brut"
           />
         ) : (
           <div role="radiogroup" aria-label={`Answer for question ${q.number}`} className="flex min-w-0 flex-1 gap-1.5">
@@ -315,7 +320,7 @@ function ReviewItem({ q, answer }: { q: KeyQuestion; answer: Answer | undefined 
                 className={cx(
                   'h-10 min-w-0 flex-1 rounded-lg border-2 border-ink font-mono font-bold',
                   o === 'BLANK' || o.length > 1 ? 'text-[10.5px]' : 'text-[15px]',
-                  value === o ? 'bg-ink text-white' : 'bg-white',
+                  value === o ? 'bg-ink text-surface' : 'bg-surface',
                 )}
               >
                 {o === 'BLANK' ? 'Blank' : q.kind === 'true_false' ? (o === 'TRUE' ? 'True' : 'False') : o}

@@ -4,13 +4,13 @@ import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode, Ref } from 'react
 export type Tone = 'white' | 'yellow' | 'green' | 'coral' | 'blue' | 'canvas' | 'ink'
 
 export const TONE_BG: Record<Tone, string> = {
-  white: 'bg-white',
+  white: 'bg-surface',
   yellow: 'bg-sun',
   green: 'bg-mint',
   coral: 'bg-coral',
   blue: 'bg-brand',
   canvas: 'bg-canvas',
-  ink: 'bg-ink text-white',
+  ink: 'bg-ink text-surface',
 }
 
 const SHADOW = { none: '', sm: 'shadow-brut-sm', md: 'shadow-brut', lg: 'shadow-brut-lg' }
@@ -36,7 +36,7 @@ export function BrutalistCard({
 
 /** Tinted panel backgrounds for an accent tone. */
 export const TONE_SOFT: Record<Tone, string> = {
-  white: 'bg-white',
+  white: 'bg-surface',
   yellow: 'bg-sun/30',
   green: 'bg-mint/30',
   coral: 'bg-coral/25',
@@ -65,11 +65,11 @@ export function accentVariant(tone: Tone): Variant {
 
 const VARIANT: Record<Variant, string> = {
   primary: 'bg-brand text-ink',
-  secondary: 'bg-white text-ink',
+  secondary: 'bg-surface text-ink',
   alert: 'bg-coral text-ink',
   yellow: 'bg-sun text-ink',
   green: 'bg-mint text-ink',
-  dark: 'bg-ink text-white',
+  dark: 'bg-ink text-surface',
 }
 
 const SIZE = {
@@ -141,9 +141,9 @@ export function IconButton({
 type BadgeVariant = 'neutral' | 'urgent' | 'dark' | 'blue' | 'green' | 'yellow' | 'muted'
 
 const BADGE: Record<BadgeVariant, string> = {
-  neutral: 'bg-white text-ink',
+  neutral: 'bg-surface text-ink',
   urgent: 'bg-coral text-ink',
-  dark: 'bg-ink text-white',
+  dark: 'bg-ink text-surface',
   blue: 'bg-brand text-ink',
   green: 'bg-mint text-ink',
   yellow: 'bg-sun text-ink',
@@ -176,11 +176,11 @@ export function Badge({
     >
       {(dot || pulse) && (
         <span className="relative inline-flex size-2">
-          {pulse && <span className="absolute inset-0 animate-ping rounded-full bg-white opacity-90" />}
+          {pulse && <span className="absolute inset-0 animate-ping rounded-full bg-surface opacity-90" />}
           <span
             className={cx(
               'relative inline-flex size-2 rounded-full border border-ink',
-              variant === 'urgent' ? 'bg-white' : variant === 'dark' ? 'bg-mint' : 'bg-leaf',
+              variant === 'urgent' ? 'bg-surface' : variant === 'dark' ? 'bg-mint' : 'bg-leaf',
             )}
           />
         </span>
@@ -243,7 +243,7 @@ export function ChoiceCard({
       onClick={onSelect}
       className={cx(
         'press flex w-full items-center gap-3 rounded-xl border-2 border-ink p-3 text-left',
-        selected ? cx(TONE_BG[tone], 'shadow-brut') : 'bg-white shadow-brut-sm',
+        selected ? cx(TONE_BG[tone], 'shadow-brut') : 'bg-surface shadow-brut-sm',
         className,
       )}
     >
@@ -256,11 +256,11 @@ export function ChoiceCard({
       <span
         className={cx(
           'flex size-5 shrink-0 items-center justify-center rounded-full border-2 border-ink',
-          selected ? 'bg-ink' : 'bg-white',
+          selected ? 'bg-ink' : 'bg-surface',
         )}
         aria-hidden
       >
-        {selected && <span className="size-2 rounded-full bg-white" />}
+        {selected && <span className="size-2 rounded-full bg-surface" />}
       </span>
     </button>
   )
@@ -281,7 +281,7 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
     >
       <span
         className={cx(
-          'absolute top-[2px] size-5 rounded-full border-2 border-ink bg-white transition-[left] duration-150',
+          'absolute top-[2px] size-5 rounded-full border-2 border-ink bg-surface transition-[left] duration-150',
           checked ? 'left-[22px]' : 'left-[2px]',
         )}
       />
@@ -291,7 +291,7 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
 
 export function ProgressBar({ value, tone = 'green' }: { value: number; tone?: Tone }) {
   return (
-    <div className="h-3 w-full overflow-hidden rounded-full border-2 border-ink bg-white">
+    <div className="h-3 w-full overflow-hidden rounded-full border-2 border-ink bg-surface">
       <div className={cx('h-full', value > 0 && value < 100 && 'border-r-2 border-ink', TONE_BG[tone])} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
     </div>
   )
