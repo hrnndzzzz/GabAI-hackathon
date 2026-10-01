@@ -50,10 +50,12 @@ export function CalendarScreen() {
   }
 
   function newEvent(): CalendarEvent {
-    const base = new Date(`${selected}T00:00:00`)
-    // Today: the next full hour. Other days: 8:00 AM.
-    const hour = selected === todayKey ? Math.min(23, today.getHours() + 1) : 8
-    base.setHours(hour, 0, 0, 0)
+    // Today: the next quarter hour (never in the past). Other days: 8:00 AM.
+    let base = new Date(`${selected}T08:00:00`)
+    if (selected === todayKey) {
+      base = new Date(Math.ceil((Date.now() + 60000) / 900000) * 900000)
+      if (dayKey(base) !== todayKey) base = new Date(`${todayKey}T23:59:00`)
+    }
     return { id: newId(), title: '', type: 'exam', startISO: localIsoWithOffset(base), durationMin: 60, allDay: false, classId: null, assessmentId: null, notes: '' }
   }
 
@@ -163,8 +165,10 @@ export function CalendarScreen() {
         </section>
       </main>
       <footer className="shrink-0 border-t-2 border-ink bg-canvas px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-        <BrutalistButton size="lg" variant="primary" icon={Plus} className="w-full" onClick={() => setEditing(newEvent())}>
-          Add to {selected === todayKey ? 'today' : selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+        <BrutalistButton size="lg" variant="primary" icon={Plus} className="w-full" disabled={selected < todayKey} onClick={() => setEditing(newEvent())}>
+          {selected < todayKey
+            ? 'Past days can’t be scheduled'
+            : `Add to ${selected === todayKey ? 'today' : selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
         </BrutalistButton>
       </footer>
       {editing && <EventSheet initial={editing} isNew={!ws.events.some((e) => e.id === editing.id)} onClose={() => setEditing(null)} />}
@@ -274,9 +278,18 @@ function EventSheet({ initial, isNew, onClose }: { initial: CalendarEvent; isNew
 
   const assessments = ws.assessments.filter((a) => !classId || a.classId === classId)
 
+  // Nothing new can start in the past. An existing item that already happened can still have its
+  // notes or section edited, as long as its date and time are left alone.
+  const now = new Date()
+  const today = dayKey(now)
+  const nowTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`
+  const when = new Date(`${date}T${allDay ? '00:00' : time || '00:00'}:00`)
+  const moved = isNew || allDay !== initial.allDay || when.getTime() !== Date.parse(initial.startISO)
+  const inPast = Number.isNaN(when.getTime()) || (allDay ? date < today : when.getTime() < now.getTime() - 60000)
+  const pastError = moved && inPast ? (date < today ? 'Pick today or a later date.' : 'Pick a time from now on.') : null
+
   function save() {
-    const when = new Date(`${date}T${allDay ? '00:00' : time}:00`)
-    if (Number.isNaN(when.getTime())) return
+    if (Number.isNaN(when.getTime()) || pastError) return
     const linked = ws.assessments.find((a) => a.id === assessmentId)
     upsertEvent({
       ...initial,
@@ -312,7 +325,7 @@ function EventSheet({ initial, isNew, onClose }: { initial: CalendarEvent; isNew
               }}
             />
           )}
-          <BrutalistButton variant="primary" onClick={save}>
+          <BrutalistButton variant="primary" disabled={!!pastError} onClick={save}>
             {isNew ? 'Add to schedule' : 'Save changes'}
           </BrutalistButton>
         </div>
@@ -354,15 +367,26 @@ function EventSheet({ initial, isNew, onClose }: { initial: CalendarEvent; isNew
         <div className={cx('grid gap-2', allDay ? 'grid-cols-1' : 'grid-cols-2')}>
           <label className="block">
             <span className="mb-1 block text-[13px] font-bold">Date</span>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={FIELD} />
+            <input type="date" value={date} min={moved ? today : undefined} onChange={(e) => setDate(e.target.value)} className={cx(FIELD, pastError && date < today && 'bg-coral/15')} />
           </label>
           {!allDay && (
             <label className="block">
               <span className="mb-1 block text-[13px] font-bold">Starts</span>
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={FIELD} />
+              <input
+                type="time"
+                value={time}
+                min={date === today ? nowTime : undefined}
+                onChange={(e) => setTime(e.target.value)}
+                className={cx(FIELD, pastError && date === today && 'bg-coral/15')}
+              />
             </label>
           )}
         </div>
+        {pastError && (
+          <p role="alert" className="-mt-1 text-xs font-semibold text-alert-ink">
+            {pastError}
+          </p>
+        )}
         {!allDay && (
           <Select
             label="Length"

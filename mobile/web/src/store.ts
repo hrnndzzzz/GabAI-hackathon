@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware'
 import { ApiError, api, describeError } from './lib/api'
 import { signOut as supabaseSignOut } from './lib/auth'
-import { classFromLabel, classLabel, type TeacherClass } from './lib/classes'
+import { classForLabel, dataUrlToBlob, blobToDataUrl, earliest, mergeDownload, preferencesBody, settingsFromPreferences } from './lib/accountSync'
+import { classLabel, type TeacherClass } from './lib/classes'
 import { getConfig } from './lib/config'
 import type { CalendarEvent } from './lib/calendar'
 import { buildFeedback, type FeedbackOptions } from './lib/grading'
@@ -11,14 +12,17 @@ import { applyRewrite, draftToMaterialContent, generationRequest, materialToDraf
 import { DEMO_ASSESSMENTS, DEMO_CLASSES, DEMO_PROFILE, DEMO_TEACHER, LATE_PAPERS, demoEvents } from './lib/mock'
 import { demoRecognize, extractionToAnswers, guessStudentName, toJpegBlob } from './lib/ocr'
 import { calculate, normalize, type Adjustment, type Answer, type AnswerState, type KeyQuestion } from './lib/scoring'
-import { assessmentFromServer, assessmentPayload, submissionFromServer, submissionPayload } from './lib/sync'
+import { useSettings } from './lib/settings'
+import { assessmentPayload, classPayload, eventPayload, submissionPayload } from './lib/sync'
 import {
   emptyWorkspace,
+  noPending,
   localIsoWithOffset,
   newId,
   type LocalAssessment,
   type LocalSubmission,
   type OutboxItem,
+  type PendingSync,
   type SavedModule,
   type TeacherProfile,
   type Workspace,
@@ -54,6 +58,13 @@ export type HubPanel = 'ocr' | 'ai' | 'archive'
 
 export type RecordsTab = 'sections' | 'papers' | 'modules'
 
+export interface AuthNotice {
+  tone: 'green' | 'coral'
+  text: string
+  /** Offer "Send a new confirmation link". */
+  resend?: boolean
+}
+
 export interface ScanSession {
   assessmentId: string
   /** Stable UUID for the eventual submission upload. */
@@ -63,6 +74,8 @@ export interface ScanSession {
   paperCount: number | null
   image: string | null
   imageSource: CaptureSource | null
+  /** When the paper was photographed or picked: its hand-in time for "late". */
+  capturedISO: string | null
   recognizer: 'demo' | 'gemini' | 'manual' | null
   ocr: { status: 'idle' | 'running' | 'done' | 'failed'; error?: string; notes?: string[] }
   answers: Answer[]
@@ -127,6 +140,8 @@ interface State extends Persisted {
   authView: 'login' | 'register'
   /** Email to prefill on the sign-in form (after registering). */
   authEmail: string
+  /** Shown on the sign-in form, e.g. after the confirmation link reopens the app. */
+  authNotice: AuthNotice | null
   /** Records opened for one section (null = everything the teacher handles). */
   recordsScope: string | null
   /** Tab to show when the all-sections Records screen opens. */
@@ -140,6 +155,7 @@ interface State extends Persisted {
   signOut: () => Promise<void>
   setMfaPrompt: (open: boolean) => void
   setAuthView: (view: 'login' | 'register', email?: string) => void
+  setAuthNotice: (notice: AuthNotice | null) => void
   savePendingProfile: (email: string, pending: PendingProfile) => void
 
   setHubPanel: (panel: HubPanel | null) => void
@@ -184,6 +200,8 @@ interface State extends Persisted {
   removeClass: (id: string) => void
   upsertEvent: (e: CalendarEvent) => void
   removeEvent: (id: string) => void
+  /** Device settings changed: copy them to the account on the next sync. */
+  markPreferencesPending: () => void
   dismissNotifications: (ids: string[]) => void
   openRecords: (classId: string | null, tab?: RecordsTab) => void
   openPreview: (file: PreviewFile) => void
@@ -267,14 +285,6 @@ function demoWorkspace(): Workspace {
   }
 }
 
-/** Find the class a label names, creating it (from the label) when the teacher has none yet. */
-function classForLabel(classes: TeacherClass[], label: string): { classes: TeacherClass[]; id: string } {
-  const found = classes.find((c) => classLabel(c) === label)
-  if (found) return { classes, id: found.id }
-  const created = classFromLabel(label, newId())
-  return { classes: [...classes, created], id: created.id }
-}
-
 /** Fills fields added after a workspace was first saved (persist version 3). */
 function upgradeWorkspace(id: string, w: Partial<Workspace>): Workspace {
   if (id === 'demo') {
@@ -298,7 +308,27 @@ function upgradeWorkspace(id: string, w: Partial<Workspace>): Workspace {
     return { ...a, classId: link.id, dueISO: a.dueISO ?? null }
   })
   const submissions = base.submissions.map((s) => ({ ...s, classId: s.classId ?? assessments.find((a) => a.id === s.assessmentId)?.classId ?? null }))
-  return { ...base, classes, assessments, submissions }
+  // Accounts from before server sync of sections, schedule and profile upload them once (PUT is idempotent).
+  const pending: PendingSync = w.pending ?? {
+    ...noPending(),
+    classes: classes.map((c) => c.id),
+    events: base.events.map((e) => e.id),
+    profile: !!base.profile,
+    avatar: base.profile?.avatar.photo ? 'upload' : null,
+  }
+  return { ...base, classes, assessments, submissions, pending }
+}
+
+/** Set when settings come from the account, so they are not queued straight back as a local change. */
+export let applyingAccountSettings = false
+
+function applyAccountSettings(patch: Parameters<ReturnType<typeof useSettings.getState>['update']>[0]) {
+  applyingAccountSettings = true
+  try {
+    useSettings.getState().update(patch)
+  } finally {
+    applyingAccountSettings = false
+  }
 }
 
 const DEFAULT_FEEDBACK: FeedbackOptions = { warm: false, nextStep: true, short: false, bilingual: false }
@@ -326,6 +356,7 @@ function freshScan(w: Workspace, a: LocalAssessment): ScanSession {
     paperCount: expected ? Math.max(expected, done + 1) : null,
     image: null,
     imageSource: null,
+    capturedISO: null,
     recognizer: null,
     ocr: { status: 'idle' },
     answers: [],
@@ -378,6 +409,10 @@ export const useStore = create<State>()(
       const patchWs = (fn: (w: Workspace) => Workspace) =>
         set((s) => ({ workspaces: { ...s.workspaces, [workspaceId(s.session)]: fn(currentWorkspace(s)) } }))
       const findAssessment = (id: string) => ws().assessments.find((a) => a.id === id)
+      /** Queue an upload of local edits; only signed-in accounts sync. */
+      const markPending = (fn: (p: PendingSync) => PendingSync) => {
+        if (isConnected(get().session)) patchWs((w) => ({ ...w, pending: fn(w.pending) }))
+      }
 
       /** Records what an API failure says about the connection and returns a message. */
       const noteFailure = (error: unknown): string => {
@@ -414,6 +449,7 @@ export const useStore = create<State>()(
         mfaPrompt: false,
         authView: 'login',
         authEmail: '',
+        authNotice: null,
         recordsScope: null,
         recordsScopes: [],
         recordsTab: 'sections',
@@ -435,7 +471,20 @@ export const useStore = create<State>()(
             // Details typed while registering are applied the first time this account signs in here.
             const pending = s.pendingProfiles[email]
             const { [email]: _used, ...rest } = s.pendingProfiles
-            const ws = pending && !existing.profile ? { ...existing, profile: pending.profile, classes: [...existing.classes, ...pending.classes] } : existing
+            const applied = pending && !existing.profile
+            const ws = applied
+              ? {
+                  ...existing,
+                  profile: pending.profile,
+                  classes: [...existing.classes, ...pending.classes],
+                  pending: {
+                    ...existing.pending,
+                    profile: true,
+                    avatar: pending.profile.avatar.photo ? ('upload' as const) : existing.pending.avatar,
+                    classes: [...new Set([...existing.pending.classes, ...pending.classes.map((c) => c.id)])],
+                  },
+                }
+              : existing
             return {
               session: { mode: 'connected', userId: user.id, email: user.email },
               workspaces: { ...s.workspaces, [id]: { ...ws, displayName: ws.profile?.fullName || displayName } },
@@ -454,6 +503,7 @@ export const useStore = create<State>()(
         },
         setMfaPrompt: (open) => set({ mfaPrompt: open }),
         setAuthView: (view, email) => set((s) => ({ authView: view, authEmail: email ?? s.authEmail })),
+        setAuthNotice: (notice) => set({ authNotice: notice }),
         savePendingProfile: (email, pending) =>
           set((s) => ({ pendingProfiles: { ...s.pendingProfiles, [email.toLowerCase()]: pending } })),
 
@@ -503,6 +553,7 @@ export const useStore = create<State>()(
               ...scan,
               image,
               imageSource: source,
+              capturedISO: localIsoWithOffset(),
               recognizer: demo ? 'demo' : null,
               ocr: { status: demo ? 'done' : 'idle' },
               answers,
@@ -611,6 +662,7 @@ export const useStore = create<State>()(
             adjustments: scan.adjustments.filter((x) => numbers.has(x.number)),
             score,
             approvedISO: localIsoWithOffset(),
+            submittedISO: scan.capturedISO,
             feedback: scan.feedback ?? buildFeedback(scan.student, score, a.topics, scan.feedbackOpts),
             origin: a.origin === 'demo' ? 'demo' : 'device',
             sync: connected ? 'pending' : 'local',
@@ -779,14 +831,71 @@ export const useStore = create<State>()(
                   },
             )
 
+          const clear = (fn: (p: PendingSync) => PendingSync) => forOwner((w) => ({ ...w, pending: fn(w.pending) }))
+          /** Offline, sign-in and server hiccups stop the run and keep everything queued. */
+          const stops = (error: unknown) => error instanceof ApiError && (error.transient || error.status === 401 || error.status === 403)
+
           const run = async () => {
             set({ syncing: true })
             const issues: string[] = []
             try {
-              // 1. Upload in order: an assessment (with its verified key) before its results.
+              const start = ws()
+              const since = start.serverTime
+              let uploadedAvatar = false
+
+              // 1. Profile, picture and settings.
+              if (start.pending.profile && start.profile) {
+                const p = start.profile
+                await api.updateMe({
+                  display_name: (p.fullName || start.displayName || 'Teacher').slice(0, 120),
+                  full_name: p.fullName.slice(0, 120) || null,
+                  school_name: p.school.slice(0, 160) || null,
+                  avatar: { style: p.avatar.style, color: p.avatar.color ?? null, pattern: p.avatar.style === 'pattern' ? (p.avatar.pattern ?? 'blocks') : null },
+                })
+                clear((x) => ({ ...x, profile: false }))
+              }
+              if (start.pending.avatar === 'upload') {
+                const photo = ws().profile?.avatar.photo
+                if (photo) {
+                  await api.uploadAvatar(await dataUrlToBlob(photo))
+                  uploadedAvatar = true
+                }
+                clear((x) => ({ ...x, avatar: null }))
+              } else if (start.pending.avatar === 'delete') {
+                await api.deleteAvatar()
+                clear((x) => ({ ...x, avatar: null }))
+              }
+              if (start.pending.preferences) {
+                await api.savePreferences(preferencesBody(useSettings.getState()))
+                clear((x) => ({ ...x, preferences: false }))
+              }
+
+              // 2. Sections, before the assessments and schedule items that point at them.
+              for (const id of start.pending.archivedClasses) {
+                try {
+                  await api.archiveClass(id)
+                } catch (error) {
+                  // Never reached the server: nothing to archive there.
+                  if (!(error instanceof ApiError && error.status === 404)) throw error
+                }
+                clear((x) => ({ ...x, archivedClasses: x.archivedClasses.filter((c) => c !== id) }))
+              }
+              for (const id of start.pending.classes) {
+                const cls = ws().classes.find((c) => c.id === id)
+                try {
+                  if (cls) await api.saveClass(id, classPayload(cls))
+                } catch (error) {
+                  if (stops(error)) throw error
+                  issues.push(`${cls ? classLabel(cls) : 'A section'}: ${describeError(error)}`)
+                }
+                clear((x) => ({ ...x, classes: x.classes.filter((c) => c !== id) }))
+              }
+
+              // 3. Results queue, in order: an assessment (with its verified key) before its results.
               for (const item of [...ws().outbox]) {
                 // Rejected uploads wait for the teacher (Records); never retry them automatically.
                 if (item.lastError) continue
+                if (item.kind === 'assessment' && item.payload.class_id && ws().pending.classes.includes(item.payload.class_id)) continue
                 if (item.kind === 'submission') {
                   const parent = findAssessment(item.assessmentId)
                   if (parent && parent.origin !== 'server' && parent.sync !== 'synced') continue
@@ -799,8 +908,7 @@ export const useStore = create<State>()(
                   markRecord(item, 'synced', undefined, out.answer_key_version)
                   forOwner((w) => ({ ...w, outbox: w.outbox.filter((o) => o.id !== item.id) }))
                 } catch (error) {
-                  // Offline, auth and server hiccups stop the run and keep the queue for later.
-                  if (error instanceof ApiError && (error.transient || error.status === 401 || error.status === 403)) throw error
+                  if (stops(error)) throw error
                   // Conflicts and validation failures need the teacher; never retry them in a loop.
                   const conflict = error instanceof ApiError && error.code === 'upload_conflict'
                   const message = describeError(error)
@@ -814,43 +922,67 @@ export const useStore = create<State>()(
                   issues.push(message)
                 }
               }
-              // 2. Download the JSON snapshots and keep anything not already on the device.
-              const [assessments, submissions, materials] = await Promise.all([
-                api.listAssessments(),
-                api.listApprovedSubmissions(),
-                api.listMaterials(),
-              ])
-              forOwner((w) => {
-                const known = new Set(w.assessments.map((a) => a.id))
-                const added = assessments
-                  .filter((a) => !a.archived && !known.has(a.id))
-                  .map(assessmentFromServer)
-                  .filter((a): a is LocalAssessment => a !== null)
-                let classes = w.classes
-                const linked = added.map((a) => {
-                  const link = classForLabel(classes, a.classLabel)
-                  classes = link.classes
-                  return { ...a, classId: link.id }
-                })
-                const allAssessments = [...w.assessments, ...linked]
-                const knownSubs = new Set(w.submissions.map((s) => s.id))
-                const newSubs = submissions.filter((s) => !knownSubs.has(s.id)).map((s) => submissionFromServer(s, allAssessments))
-                const localModules = new Map(w.modules.map((m) => [m.id, m]))
-                const modules = materials.map((m) => {
-                  const local = localModules.get(m.id)
-                  // Keep unsaved local edits; otherwise take the server's current revision.
-                  if (local?.draft.dirty) return local
-                  return { id: m.id, draft: materialToDraft(m, local?.draft), savedISO: m.updated_at }
-                })
-                return {
-                  ...w,
-                  classes,
-                  assessments: allAssessments,
-                  submissions: [...w.submissions, ...newSubs].sort((a, b) => Date.parse(b.approvedISO) - Date.parse(a.approvedISO)),
-                  modules,
-                  lastSyncedISO: new Date().toISOString(),
+
+              // 4. Schedule items, once the sections and assessments they mention are on the server.
+              for (const id of start.pending.deletedEvents) {
+                try {
+                  await api.deleteEvent(id)
+                } catch (error) {
+                  if (!(error instanceof ApiError && error.status === 404)) throw error
                 }
-              })
+                clear((x) => ({ ...x, deletedEvents: x.deletedEvents.filter((e) => e !== id) }))
+              }
+              for (const id of ws().pending.events) {
+                const event = ws().events.find((e) => e.id === id)
+                const unsynced = (assessmentId: string | null) => {
+                  const a = assessmentId ? findAssessment(assessmentId) : undefined
+                  return !!a && a.origin !== 'server' && a.sync !== 'synced'
+                }
+                if (event && ((event.classId && ws().pending.classes.includes(event.classId)) || unsynced(event.assessmentId))) continue
+                try {
+                  if (event) await api.saveEvent(id, eventPayload(event))
+                } catch (error) {
+                  if (stops(error)) throw error
+                  issues.push(`${event?.title ?? 'A schedule item'}: ${describeError(error)}`)
+                }
+                clear((x) => ({ ...x, events: x.events.filter((e) => e !== id) }))
+              }
+
+              // 5. Download only what changed since the last sync (everything on the first one).
+              const [me, classes, events, assessments, submissions, materials, preferences] = await Promise.all([
+                api.me(),
+                api.listClasses(since),
+                api.listEvents(since),
+                api.listAssessments(since),
+                api.listApprovedSubmissions(since),
+                api.listMaterials(since),
+                since ? Promise.resolve(null) : api.preferences(),
+              ])
+              let photo: string | null | undefined
+              const now = ws()
+              if (!uploadedAvatar && !now.pending.avatar) {
+                if (me.avatar?.has_photo && me.avatar.photo_updated_at !== now.avatarSyncedISO) {
+                  const blob = await api.avatar()
+                  photo = blob ? await blobToDataUrl(blob) : null
+                } else if (me.avatar && !me.avatar.has_photo && now.avatarSyncedISO) {
+                  photo = null // Removed on another device.
+                }
+              }
+              forOwner((w) =>
+                mergeDownload(w, {
+                  me,
+                  photo,
+                  uploadedAvatar,
+                  classes: classes.items,
+                  events: events.items,
+                  assessments: assessments.items,
+                  submissions: submissions.items,
+                  materials: materials.items,
+                  serverTime: earliest([classes.serverTime, events.serverTime, assessments.serverTime, submissions.serverTime, materials.serverTime]),
+                }),
+              )
+              // A phone signing in for the first time takes the account's settings.
+              if (preferences?.updated_at && !ws().pending.preferences) applyAccountSettings(settingsFromPreferences(preferences))
               set({ connection: 'online' })
               if (!opts?.quiet) {
                 const waiting = ws().outbox.filter((o) => !o.lastError).length
@@ -906,8 +1038,18 @@ export const useStore = create<State>()(
             submissions: w.submissions.map((s) => (s.id === refId ? { ...s, sync: 'local', syncError: undefined } : s)),
             assessments: w.assessments.map((a) => (a.id === refId ? { ...a, sync: 'local', syncError: undefined } : a)),
           })),
-        updateProfile: (profile) => patchWs((w) => ({ ...w, profile, displayName: profile.fullName || w.displayName })),
-        upsertClass: (c) =>
+        updateProfile: (profile) => {
+          const before = ws().profile?.avatar.photo ?? null
+          const photo = profile.avatar.photo ?? null
+          patchWs((w) => ({ ...w, profile, displayName: profile.fullName || w.displayName }))
+          markPending((p) => ({
+            ...p,
+            profile: true,
+            avatar: photo && photo !== before ? 'upload' : before && !photo ? 'delete' : p.avatar,
+          }))
+          void get().syncNow({ quiet: true })
+        },
+        upsertClass: (c) => {
           patchWs((w) => {
             const exists = w.classes.some((x) => x.id === c.id)
             const label = classLabel(c)
@@ -918,11 +1060,29 @@ export const useStore = create<State>()(
               assessments: w.assessments.map((a) => (a.classId === c.id ? { ...a, classLabel: label } : a)),
               submissions: w.submissions.map((s) => (s.classId === c.id ? { ...s, classLabel: label } : s)),
             }
-          }),
-        removeClass: (id) => patchWs((w) => ({ ...w, classes: w.classes.filter((c) => c.id !== id) })),
-        upsertEvent: (e) =>
-          patchWs((w) => ({ ...w, events: w.events.some((x) => x.id === e.id) ? w.events.map((x) => (x.id === e.id ? e : x)) : [...w.events, e] })),
-        removeEvent: (id) => patchWs((w) => ({ ...w, events: w.events.filter((e) => e.id !== id) })),
+          })
+          markPending((p) => ({ ...p, classes: [...new Set([...p.classes, c.id])], archivedClasses: p.archivedClasses.filter((x) => x !== c.id) }))
+          void get().syncNow({ quiet: true })
+        },
+        removeClass: (id) => {
+          patchWs((w) => ({ ...w, classes: w.classes.filter((c) => c.id !== id) }))
+          markPending((p) => ({ ...p, classes: p.classes.filter((x) => x !== id), archivedClasses: [...new Set([...p.archivedClasses, id])] }))
+          void get().syncNow({ quiet: true })
+        },
+        upsertEvent: (e) => {
+          patchWs((w) => ({ ...w, events: w.events.some((x) => x.id === e.id) ? w.events.map((x) => (x.id === e.id ? e : x)) : [...w.events, e] }))
+          markPending((p) => ({ ...p, events: [...new Set([...p.events, e.id])], deletedEvents: p.deletedEvents.filter((x) => x !== e.id) }))
+          void get().syncNow({ quiet: true })
+        },
+        removeEvent: (id) => {
+          patchWs((w) => ({ ...w, events: w.events.filter((e) => e.id !== id) }))
+          markPending((p) => ({ ...p, events: p.events.filter((x) => x !== id), deletedEvents: [...new Set([...p.deletedEvents, id])] }))
+          void get().syncNow({ quiet: true })
+        },
+        markPreferencesPending: () => {
+          markPending((p) => ({ ...p, preferences: true }))
+          void get().syncNow({ quiet: true })
+        },
         dismissNotifications: (ids) =>
           patchWs((w) => ({ ...w, dismissedNotifications: [...new Set([...w.dismissedNotifications, ...ids])] })),
         openRecords: (classId, tab = 'sections') =>
@@ -937,7 +1097,7 @@ export const useStore = create<State>()(
     {
       name: 'gabai-store-v2',
       storage,
-      version: 3,
+      version: 4,
       migrate: (persisted) => {
         const state = persisted as Partial<Persisted>
         const workspaces: Record<string, Workspace> = {}

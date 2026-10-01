@@ -192,21 +192,15 @@ export function ScanReview() {
           </MonoLabel>
         }
       >
-        <div className="grid grid-cols-[auto_1fr_1fr] gap-2.5">
+        <div className="grid grid-cols-[auto_1fr] gap-2.5">
           <BrutalistButton size="lg" variant="secondary" icon={ArrowLeft} aria-label="Previous step" onClick={() => back()} className="px-3" />
-          <BrutalistButton variant="yellow" size="lg" className="px-2 text-[13.5px] whitespace-nowrap" disabled={blockers.length > 0} onClick={() => approve('scan')}>
-            {leftAfter === 0 ? 'Approve & Finish' : 'Approve & Next'}
-          </BrutalistButton>
-          <BrutalistButton
-            size="lg"
-            variant="secondary"
-            className="px-2 text-[13.5px] whitespace-nowrap"
-            disabled={blockers.length > 0}
-            onClick={() => approve('records')}
-          >
-            Send to Gradebook
+          <BrutalistButton variant="yellow" size="lg" className="min-w-0" disabled={blockers.length > 0} onClick={() => approve('scan')}>
+            {leftAfter === 0 ? 'Approve & Finish' : 'Approve & Next paper'}
           </BrutalistButton>
         </div>
+        <BrutalistButton size="sm" variant="secondary" className="mt-2 w-full" disabled={blockers.length > 0} onClick={() => approve('records')}>
+          Approve & save to Gradebook
+        </BrutalistButton>
       </FlowFooter>
     </div>
   )

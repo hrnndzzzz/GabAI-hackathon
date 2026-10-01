@@ -23,13 +23,17 @@ def export():
     app.state.auth_http.close()
     app.state.engine.dispose()
     dialect = postgresql.dialect()
-    ddl = ["-- Generated from app/models.py. Apply once, followed by 0002_security.sql.\nBEGIN;"]
+    ddl = [
+        "-- Generated from app/models.py for review only. Do not apply: databases are built by the\n"
+        "-- numbered files in supabase/migrations, which must not be edited once applied.\nBEGIN;"
+    ]
     for table in Base.metadata.sorted_tables:
         ddl.append(str(CreateTable(table).compile(dialect=dialect)).strip() + ";")
         for index in sorted(table.indexes, key=lambda i: i.name):
             ddl.append(str(CreateIndex(index).compile(dialect=dialect)) + ";")
     ddl.append("COMMIT;\n")
-    path = ROOT / "supabase" / "migrations" / "0001_schema.sql"
+    # The applied migrations are frozen; this snapshot shows what they should add up to.
+    path = ROOT / "docs" / "schema.sql"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n\n".join(ddl), encoding="utf-8")
 

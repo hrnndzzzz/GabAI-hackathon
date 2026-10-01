@@ -1,11 +1,11 @@
-import { ArrowRight, AtSign, Eye, EyeOff, KeyRound, UserPlus, WifiOff } from 'lucide-react'
+import { ArrowRight, AtSign, Eye, EyeOff, KeyRound, MailPlus, UserPlus, WifiOff } from 'lucide-react'
 import { useCallback, useState, type FormEvent, type ReactNode } from 'react'
 import { Captcha } from '../components/Captcha'
 import { LogoMark } from '../components/Logo'
 import { MfaPanel } from '../components/MfaPanel'
 import { BrutalistButton, BrutalistCard, MonoLabel, cx } from '../components/ui'
 import { ApiError, api, describeError } from '../lib/api'
-import { mfaState, signIn, signOut, type SignedInUser } from '../lib/auth'
+import { mfaState, resendConfirmation, signIn, signOut, type SignedInUser } from '../lib/auth'
 import { getCaptchaSiteKey, getConfig } from '../lib/config'
 import { DEMO_TEACHER } from '../lib/mock'
 import { APP_VERSION } from './Settings'
@@ -17,6 +17,9 @@ export function Login() {
   const enterDemo = useStore((s) => s.enterDemo)
   const enterConnected = useStore((s) => s.enterConnected)
   const setAuthView = useStore((s) => s.setAuthView)
+  const authNotice = useStore((s) => s.authNotice)
+  const setAuthNotice = useStore((s) => s.setAuthNotice)
+  const [resending, setResending] = useState(false)
   const online = getConfig() !== null
   const needsCaptcha = !!getCaptchaSiteKey()
   const [phase, setPhase] = useState<Phase>('form')
@@ -68,6 +71,7 @@ export function Login() {
     setErrors(next)
     setNotice(null)
     if (Object.keys(next).length) return
+    setAuthNotice(null)
     setPhase('busy')
     try {
       await afterPassword(await signIn(email.trim(), password, captcha))
@@ -79,6 +83,32 @@ export function Login() {
       setAttempt((n) => n + 1)
     }
   }
+
+  // A fresh CAPTCHA token is spent on the resend, like on a sign-in attempt.
+  async function resend() {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      setErrors({ email: 'Enter the email you registered with.' })
+      return
+    }
+    if (needsCaptcha && !captcha) {
+      setErrors({ form: 'Complete the "I am human" check first.' })
+      return
+    }
+    setResending(true)
+    setErrors({})
+    try {
+      await resendConfirmation(email.trim(), captcha)
+      setAuthNotice({ tone: 'green', text: `We sent a new confirmation link to ${email.trim()}. Open it on this phone and GabAI will come back here.` })
+    } catch (error) {
+      setErrors({ form: describeError(error) })
+    } finally {
+      setResending(false)
+      setCaptcha(null)
+      setAttempt((n) => n + 1)
+    }
+  }
+
+  const unconfirmed = !!errors.form && /confirm your email/i.test(errors.form)
 
   if (phase === 'mfa' && user) {
     return (
@@ -158,6 +188,22 @@ export function Login() {
               <p role="status" className="rounded-lg border-2 border-ink bg-mint/30 px-3 py-2 text-[13px] font-semibold">
                 {notice}
               </p>
+            )}
+            {authNotice && (
+              <p
+                role="status"
+                className={cx(
+                  'rounded-lg border-2 border-ink px-3 py-2 text-[13px] leading-snug font-semibold',
+                  authNotice.tone === 'green' ? 'bg-mint/30' : 'bg-coral/25',
+                )}
+              >
+                {authNotice.text}
+              </p>
+            )}
+            {(authNotice?.resend || unconfirmed) && (
+              <BrutalistButton variant="secondary" className="w-full" icon={MailPlus} disabled={resending} onClick={() => void resend()}>
+                {resending ? 'Sending…' : 'Send a new confirmation link'}
+              </BrutalistButton>
             )}
             <BrutalistButton type="submit" size="lg" className="w-full" iconRight={ArrowRight} disabled={phase === 'busy'}>
               {phase === 'busy' ? 'Signing in…' : 'Sign in'}

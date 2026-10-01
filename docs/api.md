@@ -81,6 +81,21 @@ Examples below are fictional structural examples. Create referenced records firs
 | GET | `/v1/consultations/{consultation_id}` | none | ConsultationOut | 200 |
 | PATCH | `/v1/consultations/{consultation_id}` | ConsultationEdit | ConsultationOut | 200 |
 | POST | `/v1/consultations/{consultation_id}/approve` | RevisionAction | ConsultationOut | 200 |
+| PUT | `/v1/classes/{class_id}` | ClassIn | ClassOut | 200 |
+| GET | `/v1/classes/{class_id}` | none | ClassOut | 200 |
+| DELETE | `/v1/classes/{class_id}` | none | ClassOut | 200 |
+| GET | `/v1/classes` | none | Page_ClassOut_ | 200 |
+| GET | `/v1/classes/{class_id}/summary` | none | ClassSummary | 200 |
+| GET | `/v1/classes/{class_id}/students` | none | Page_StudentStat_ | 200 |
+| PUT | `/v1/events/{event_id}` | EventIn | EventOut | 200 |
+| DELETE | `/v1/events/{event_id}` | none | EventOut | 200 |
+| GET | `/v1/events` | none | Page_EventOut_ | 200 |
+| GET | `/v1/me/avatar` | none | none | 200 |
+| PUT | `/v1/me/avatar` | Body_avatar_put_v1_me_avatar_put | none | 204 |
+| DELETE | `/v1/me/avatar` | none | none | 204 |
+| GET | `/v1/me/preferences` | none | PreferencesOut | 200 |
+| PUT | `/v1/me/preferences` | Preferences | PreferencesOut | 200 |
+| POST | `/v1/feedback` | FeedbackIn | FeedbackOut | 201 |
 
 ## GET /health
 
@@ -108,7 +123,7 @@ curl -X GET "$BASE_URL/v1/me" -H "Authorization: Bearer $ACCESS_TOKEN"
 
 ## PUT /v1/me
 
-Edit Me
+display_name is required; full_name, school_name and avatar change only when sent.
 
 ```bash
 curl -X PUT "$BASE_URL/v1/me" -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" --data @request.json
@@ -1181,5 +1196,160 @@ Example `request.json`:
 {
   "confirmed": true,
   "expected_revision": 1
+}
+```
+
+## PUT /v1/classes/{class_id}
+
+Create or update a class (one section and subject) with its class list, idempotently. Grade level, section and subject are found or created by name. Students no longer listed have their enrollment closed, never deleted; their results are kept.
+
+```bash
+curl -X PUT "$BASE_URL/v1/classes/f036037e-c3fb-5693-9b5c-865a5e3fea87" -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" --data @request.json
+```
+
+Example `request.json`:
+
+```json
+{
+  "level": "elementary",
+  "grade": 1,
+  "section": "Fictional example",
+  "subject": "Fictional example"
+}
+```
+
+## GET /v1/classes/{class_id}
+
+Class Get
+
+```bash
+curl -X GET "$BASE_URL/v1/classes/f036037e-c3fb-5693-9b5c-865a5e3fea87" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## DELETE /v1/classes/{class_id}
+
+Archives the class. Its assessments, results and enrollments are kept. Idempotent.
+
+```bash
+curl -X DELETE "$BASE_URL/v1/classes/f036037e-c3fb-5693-9b5c-865a5e3fea87" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## GET /v1/classes
+
+Class List
+
+```bash
+curl -X GET "$BASE_URL/v1/classes" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## GET /v1/classes/{class_id}/summary
+
+Class Summary
+
+```bash
+curl -X GET "$BASE_URL/v1/classes/f036037e-c3fb-5693-9b5c-865a5e3fea87/summary" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## GET /v1/classes/{class_id}/students
+
+Class Students
+
+```bash
+curl -X GET "$BASE_URL/v1/classes/f036037e-c3fb-5693-9b5c-865a5e3fea87/students" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## PUT /v1/events/{event_id}
+
+Create or update a schedule item idempotently. A deleted item comes back if saved again.
+
+```bash
+curl -X PUT "$BASE_URL/v1/events/79d8227c-9842-5367-9ccd-7306264f7067" -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" --data @request.json
+```
+
+Example `request.json`:
+
+```json
+{
+  "title": "Fictional example",
+  "type": "exam",
+  "starts_at": "2026-09-15T09:00:00+08:00"
+}
+```
+
+## DELETE /v1/events/{event_id}
+
+Soft delete: incremental sync returns it with deleted_at set. Idempotent.
+
+```bash
+curl -X DELETE "$BASE_URL/v1/events/79d8227c-9842-5367-9ccd-7306264f7067" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## GET /v1/events
+
+Event List
+
+```bash
+curl -X GET "$BASE_URL/v1/events" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## GET /v1/me/avatar
+
+Avatar Get
+
+```bash
+curl -X GET "$BASE_URL/v1/me/avatar" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## PUT /v1/me/avatar
+
+Upload a profile picture (JPEG/PNG/WebP, under 512 KB). Stored as a 256 px JPEG without metadata.
+
+```bash
+curl -X PUT "$BASE_URL/v1/me/avatar" -H "Authorization: Bearer $ACCESS_TOKEN" -F "file=@fictional-paper.png;type=image/png"
+```
+
+## DELETE /v1/me/avatar
+
+Avatar Delete
+
+```bash
+curl -X DELETE "$BASE_URL/v1/me/avatar" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## GET /v1/me/preferences
+
+Preferences Get
+
+```bash
+curl -X GET "$BASE_URL/v1/me/preferences" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## PUT /v1/me/preferences
+
+Merges the settings that are sent; others are unchanged.
+
+```bash
+curl -X PUT "$BASE_URL/v1/me/preferences" -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" --data @request.json
+```
+
+Example `request.json`:
+
+```json
+{}
+```
+
+## POST /v1/feedback
+
+Feedback Create
+
+```bash
+curl -X POST "$BASE_URL/v1/feedback" -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" --data @request.json
+```
+
+Example `request.json`:
+
+```json
+{
+  "message": "Fictional example"
 }
 ```

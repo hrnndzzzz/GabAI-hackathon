@@ -52,6 +52,16 @@ gabai.captchaSiteKey=your-turnstile-site-key
 
 The Turnstile secret key goes in Supabase (Authentication → Attack Protection), never here.
 
+So the email-confirmation link opens the app again, set up Supabase under
+Authentication → URL Configuration:
+
+- **Redirect URLs:** add `gabai://auth/confirmed`. The app asks for it at registration.
+- **Site URL:** a real web page (your school's site, or this repository). It's used when an
+  email is opened on a computer. Left at the default, `http://localhost:3000`, the browser
+  shows "can't connect" after confirming.
+
+The link's sign-in tokens are dropped by the app; teachers still sign in with their password.
+
 On the backend, allow the WebView origin, and the dev server's origin if you use it:
 
 ```bash

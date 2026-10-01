@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKeyConstraint,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -52,9 +53,21 @@ def ref(table, column, target):
 class Profile(Owned, Base):
     __tablename__ = "teacher_profiles"
     display_name: Mapped[str] = mapped_column(String(120), default="Teacher")
+    # Mobile v1.2 profile: shown on the teacher's own devices only.
+    full_name: Mapped[str | None] = mapped_column(String(120))
+    school_name: Mapped[str | None] = mapped_column(String(160))
+    avatar_style: Mapped[str] = mapped_column(String(10), default="initials")
+    avatar_color: Mapped[str | None] = mapped_column(String(7))
+    avatar_pattern: Mapped[str | None] = mapped_column(String(20))
+    # Re-encoded 256 px JPEG (metadata stripped), at most a few tens of KB.
+    avatar_image: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    avatar_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    preferences: Mapped[dict] = mapped_column(JSON, default=dict)
+    preferences_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("id", "owner_id"),
         UniqueConstraint("owner_id"),
+        CheckConstraint("avatar_style IN ('initials', 'pattern', 'photo')"),
     )
 
 
@@ -82,6 +95,18 @@ class Term(Owned, Base):
 class GradeLevel(Owned, Base):
     __tablename__ = "grade_levels"
     name: Mapped[str] = mapped_column(String(120))
+    # School level and grade number, set for grade levels created by the mobile app's classes.
+    level: Mapped[str | None] = mapped_column(String(20))
+    grade: Mapped[int | None] = mapped_column(Integer)
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id"),
+        UniqueConstraint("owner_id", "level", "grade"),
+        CheckConstraint("level IS NULL OR level IN ('elementary', 'highschool', 'college')"),
+        CheckConstraint(
+            "(level IS NULL AND grade IS NULL) OR (level = 'elementary' AND grade BETWEEN 0 AND 6)"
+            " OR (level = 'highschool' AND grade BETWEEN 7 AND 12) OR (level = 'college' AND grade BETWEEN 1 AND 4)"
+        ),
+    )
 
 
 class Section(Owned, Base):
@@ -128,6 +153,23 @@ class Competency(Owned, Base):
     __table_args__ = (UniqueConstraint("id", "owner_id"), ref(__tablename__, "subject_id", "subjects"))
 
 
+class TeachingClass(Owned, Base):
+    """A section the teacher teaches one subject to, with its class list (the mobile app's "class")."""
+
+    __tablename__ = "teaching_classes"
+    section_id: Mapped[UUID] = mapped_column(Uuid, index=True)
+    subject_id: Mapped[UUID] = mapped_column(Uuid, index=True)
+    # Current class list in the teacher's order: [{"student_id": ...}]. Enrollments keep the history.
+    roster: Mapped[list] = mapped_column(JSON, default=list)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id"),
+        ref(__tablename__, "section_id", "sections"),
+        ref(__tablename__, "subject_id", "subjects"),
+    )
+
+
 class Assessment(Owned, Base):
     __tablename__ = "assessments"
     title: Mapped[str] = mapped_column(String(200))
@@ -138,10 +180,13 @@ class Assessment(Owned, Base):
     assessment_date: Mapped[date] = mapped_column(Date)
     category: Mapped[str | None] = mapped_column(String(80))
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    class_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("id", "owner_id"),
         ref(__tablename__, "subject_id", "subjects"),
         ref(__tablename__, "term_id", "terms"),
+        ref(__tablename__, "class_id", "teaching_classes"),
     )
 
 
@@ -208,6 +253,8 @@ class Submission(Owned, Base):
     approved_by: Mapped[UUID | None] = mapped_column(Uuid)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     local_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the paper was handed in (the app sends its capture time); decides "late" against due_at.
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("id", "owner_id"),
         ref(__tablename__, "assessment_id", "assessments"),
@@ -316,6 +363,35 @@ class Consultation(Owned, Base):
         ref(__tablename__, "subject_id", "subjects"),
         ref(__tablename__, "term_id", "terms"),
     )
+
+
+class CalendarEvent(Owned, Base):
+    __tablename__ = "calendar_events"
+    title: Mapped[str] = mapped_column(String(80))
+    type: Mapped[str] = mapped_column(String(20))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    duration_min: Mapped[int] = mapped_column(Integer, default=0)
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    class_id: Mapped[UUID | None] = mapped_column(Uuid)
+    assessment_id: Mapped[UUID | None] = mapped_column(Uuid)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    # Soft delete, so other devices learn about removals through incremental sync.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id"),
+        ref(__tablename__, "class_id", "teaching_classes"),
+        ref(__tablename__, "assessment_id", "assessments"),
+        CheckConstraint("type IN ('exam', 'quiz', 'class', 'deadline', 'meeting', 'reminder')"),
+        CheckConstraint("duration_min BETWEEN 0 AND 600"),
+    )
+
+
+class Feedback(Owned, Base):
+    __tablename__ = "feedback_messages"
+    message: Mapped[str] = mapped_column(Text)
+    app_version: Mapped[str | None] = mapped_column(String(40))
+    platform: Mapped[str | None] = mapped_column(String(40))
 
 
 class UploadReceipt(Owned, Base):

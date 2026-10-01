@@ -1,6 +1,8 @@
 package com.example.gabai
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -8,9 +10,13 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
@@ -32,6 +38,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
+import org.json.JSONObject
 
 /**
  * Hosts the GabAI web app (built from ../web into assets/www) in a full-screen WebView
@@ -85,6 +92,7 @@ class MainActivity : AppCompatActivity() {
                     WindowInsetsCompat.Type.ime(),
             )
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            hole = insets.displayCutout?.boundingRects?.let { pickPunchHole(it, view.width) }
             WindowInsetsCompat.CONSUMED
         }
 
@@ -103,8 +111,48 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        handleAuthLink(intent)
         webView.loadUrl(START_URL)
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleAuthLink(intent)
+    }
+
+    private var pendingAuthEvent: String? = null
+
+    /**
+     * gabai://auth/confirmed, opened from the email-confirmation link. Supabase appends the outcome
+     * to it, including sign-in tokens on success: only the outcome is kept and the tokens are dropped
+     * unread, so the teacher still signs in with their password (and CAPTCHA, and two-step check).
+     */
+    private fun handleAuthLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme != "gabai" || uri.host != "auth") return
+        val params = mutableMapOf<String, String>()
+        for (part in listOfNotNull(uri.encodedQuery, uri.encodedFragment)) {
+            for (pair in part.split('&')) {
+                val i = pair.indexOf('=')
+                if (i > 0) params[Uri.decode(pair.substring(0, i))] = Uri.decode(pair.substring(i + 1).replace('+', ' '))
+            }
+        }
+        val error = params["error_code"] ?: params["error"]
+        val event = JSONObject()
+            .put("kind", if (error == null) "confirmed" else if (error == "otp_expired") "expired" else "error")
+            .apply { params["error_description"]?.let { put("message", it.take(200)) } }
+            .toString()
+        synchronized(this) { pendingAuthEvent = event }
+        // Don't keep the tokens around, and don't replay the link if the activity is recreated.
+        intent.data = null
+        setIntent(intent)
+        // A running page picks it up now; a page still loading asks for it once it starts.
+        if (::webView.isInitialized) webView.evaluateJavascript("window.gabaiAuthEvent && window.gabaiAuthEvent()", null)
+    }
+
+    /** Hands the last confirmation-link outcome to the page once (JSON), or null. */
+    @Synchronized
+    fun takeAuthEvent(): String? = pendingAuthEvent.also { pendingAuthEvent = null }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
@@ -189,6 +237,58 @@ class MainActivity : AppCompatActivity() {
 
     private var themeDark = false
 
+    /** The front camera's punch hole (window coordinates), when the screen has one. */
+    @Volatile
+    private var hole: RectF? = null
+    private var ring: StatusRingView? = null
+    private var ringPulse: ObjectAnimator? = null
+    private val ringHandler = Handler(Looper.getMainLooper())
+
+    /** A punch hole is small and roughly round and near the top; a wide notch gets no ring. */
+    private fun pickPunchHole(rects: List<android.graphics.Rect>, width: Int): RectF? =
+        rects
+            .filter { it.width() > 0 && it.width() < maxOf(width, 1) / 5 && it.width() <= it.height() * 2 && it.top < it.height() * 4 }
+            .minByOrNull { it.width() * it.height() }
+            ?.let { RectF(it) }
+
+    /** Centre of the punch hole in the page's CSS pixels, for placing the status island under it. */
+    fun cutoutJson(): String {
+        val h = hole ?: return "{}"
+        val density = resources.displayMetrics.density
+        return JSONObject().put("x", (h.centerX() - root.paddingLeft) / density).toString()
+    }
+
+    /** Rings the punch hole in [color] for [durationMs], pulsing while reconnecting. */
+    fun showStatusRing(color: String, pulse: Boolean, durationMs: Long) {
+        val h = hole ?: return
+        val parsed = runCatching { Color.parseColor(color) }.getOrNull() ?: return
+        val view = ring ?: StatusRingView(this).also {
+            (window.decorView as ViewGroup).addView(it, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            ring = it
+        }
+        view.hole = h
+        view.color = parsed
+        ringPulse?.cancel()
+        view.animate().cancel()
+        view.visibility = View.VISIBLE
+        view.alpha = 0f
+        view.animate().alpha(1f).setDuration(180).start()
+        if (pulse) {
+            ringPulse = ObjectAnimator.ofFloat(view, View.ALPHA, 1f, 0.2f).apply {
+                duration = 450
+                startDelay = 180
+                repeatMode = ValueAnimator.REVERSE
+                repeatCount = ValueAnimator.INFINITE
+                start()
+            }
+        }
+        ringHandler.removeCallbacksAndMessages(null)
+        ringHandler.postDelayed({
+            ringPulse?.cancel()
+            view.animate().alpha(0f).setDuration(320).withEndAction { view.visibility = View.GONE }.start()
+        }, durationMs.coerceIn(500, 10_000))
+    }
+
     /** Matches the system bars to the page: dark for the camera viewfinder and the dark theme. */
     fun setDarkChrome(dark: Boolean) {
         root.setBackgroundColor(if (dark) DARK_CANVAS else CANVAS)
@@ -207,6 +307,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        ringHandler.removeCallbacksAndMessages(null)
+        ringPulse?.cancel()
         root.removeView(webView)
         webView.destroy()
         super.onDestroy()

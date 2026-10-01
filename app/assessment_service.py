@@ -3,7 +3,9 @@ from sqlalchemy import func
 from app import models as m
 from app import schemas as s
 from app.errors import fail
+from app.mobile_service import expect_class
 from app.models import now
+from app.schemas import as_utc
 
 
 def key_questions(repo, key):
@@ -32,10 +34,9 @@ def key_out(repo, key):
 
 def assessment_out(repo, assessment):
     keys = sorted(repo.rows(m.AnswerKey, m.AnswerKey.assessment_id == assessment.id), key=lambda k: k.version)
-    return s.AssessmentOut(
-        **{c.name: getattr(assessment, c.name) for c in assessment.__table__.columns},
-        answer_keys=[key_out(repo, key) for key in keys],
-    )
+    values = {c.name: getattr(assessment, c.name) for c in assessment.__table__.columns}
+    values["due_at"] = as_utc(assessment.due_at)
+    return s.AssessmentOut(**values, answer_keys=[key_out(repo, key) for key in keys])
 
 
 def create_key(repo, assessment, payload):
@@ -73,8 +74,15 @@ def create_assessment(repo, payload):
         term = repo.get(m.Term, payload.term_id)
         if not term.starts_on <= payload.assessment_date <= term.ends_on:
             fail(422, "date_outside_term", "Assessment date must be inside its term")
+    if (
+        payload.class_id
+        and repo.db.scalar(repo.query(m.TeachingClass).where(m.TeachingClass.id == payload.class_id)) is None
+    ):
+        fail(422, "unknown_class", "Upload the class before the assessments given to it")
     assessment = repo.add(m.Assessment, **payload.model_dump(exclude={"answer_key"}))
     key = create_key(repo, assessment, payload.answer_key)
+    if assessment.class_id:
+        expect_class(repo, assessment)
     return assessment, key
 
 

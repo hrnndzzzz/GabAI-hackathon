@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Generic, Literal, TypeVar
 from uuid import UUID, uuid4
@@ -17,6 +17,19 @@ MaterialKind = Literal["lesson_plan", "quiz", "rubric", "examples", "activity", 
 
 class Schema(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True, str_strip_whitespace=True)
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    """Stored and compared in UTC; SQLite returns naive values, which are already UTC here."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def aware_utc(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        raise ValueError("Timestamps require a timezone")
+    return as_utc(value)
 
 
 class Identified(Schema):
@@ -38,6 +51,8 @@ class Page(Schema, Generic[T]):
     limit: int
     offset: int
     has_more: bool
+    # Set by endpoints that support updated_since: send it back as updated_since on the next sync.
+    server_time: datetime | None = None
 
 
 class ErrorDetail(Schema):
@@ -50,14 +65,61 @@ class ErrorResponse(Schema):
     error: ErrorDetail
 
 
+AvatarStyle = Literal["initials", "pattern", "photo"]
+AvatarPattern = Literal["blocks", "dots", "stripes", "waves", "triangles", "rings", "checks", "stars"]
+HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
+
+
+class AvatarIn(Schema):
+    style: AvatarStyle
+    color: HexColor | None = None
+    pattern: AvatarPattern | None = None
+
+
+class AvatarOut(Schema):
+    style: AvatarStyle
+    color: str | None
+    pattern: str | None
+    has_photo: bool
+    photo_updated_at: datetime | None
+
+
 class ProfileOut(Schema):
     id: UUID
     display_name: str
     mfa_required: bool
+    full_name: str | None = None
+    school_name: str | None = None
+    avatar: AvatarOut | None = None
+    updated_at: datetime | None = None
 
 
 class ProfileEdit(Schema):
+    """Fields left out are unchanged, so older clients that send only display_name keep working."""
+
     display_name: Short
+    full_name: Annotated[str, Field(max_length=120)] | None = None
+    school_name: Annotated[str, Field(max_length=160)] | None = None
+    avatar: AvatarIn | None = None
+
+
+NotifyKind = Literal["urgent", "sync", "timer", "schedule", "tips"]
+Shortcut = Literal["scan", "ai", "timer", "calendar", "records", "new-key"]
+
+
+class Preferences(Schema):
+    """Settings that follow the teacher to another phone. Unknown keys are rejected."""
+
+    notify: dict[NotifyKind, bool] | None = None
+    theme: Literal["light", "dark", "system"] | None = None
+    reduce_motion: bool | None = None
+    paper_size: Literal["A4", "Letter"] | None = None
+    default_format: Literal["pdf", "markdown", "csv"] | None = None
+    dock: list[Shortcut] | None = Field(default=None, min_length=1, max_length=3)
+
+
+class PreferencesOut(Preferences):
+    updated_at: datetime | None
 
 
 class NameEdit(Schema):
@@ -133,12 +195,23 @@ class AssessmentCreate(Identified):
     term_id: UUID | None = None
     assessment_date: date
     category: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    # Mobile v1.2: the class it was given to, and when papers are due (later = late).
+    class_id: UUID | None = None
+    due_at: datetime | None = None
     answer_key: KeyCreate
+
+    _due_utc = field_validator("due_at")(classmethod(lambda cls, v: aware_utc(v)))
 
 
 class AssessmentEdit(Schema):
+    """class_id and due_at change only when sent (send null to clear them)."""
+
     title: Annotated[str, Field(min_length=1, max_length=200)]
     description: Annotated[str, Field(max_length=5000)] | None = None
+    class_id: UUID | None = None
+    due_at: datetime | None = None
+
+    _due_utc = field_validator("due_at")(classmethod(lambda cls, v: aware_utc(v)))
 
 
 class AssessmentOut(Record):
@@ -150,6 +223,8 @@ class AssessmentOut(Record):
     assessment_date: date
     category: str | None
     archived: bool
+    class_id: UUID | None = None
+    due_at: datetime | None = None
     answer_keys: list[KeyOut]
 
 
@@ -272,6 +347,10 @@ class SubmissionCreate(Identified):
     source: Literal["on_device", "gemini", "manual"]
     answers: list[AnswerIn] = Field(max_length=500)
     client_score: ClientScore | None = None
+    # When the paper was handed in; compared with the assessment's due_at.
+    submitted_at: datetime | None = None
+
+    _submitted_utc = field_validator("submitted_at")(classmethod(lambda cls, v: aware_utc(v)))
 
 
 class SubmissionEdit(Schema):
@@ -312,6 +391,9 @@ class SubmissionOut(Record):
     approved_by: UUID | None
     approved_at: datetime | None
     local_approved_at: datetime | None
+    submitted_at: datetime | None = None
+    # Handed in after the assessment's due time (submitted_at, else local_approved_at, else approved_at).
+    late: bool = False
 
 
 class OfflineAssessment(Schema):
@@ -633,3 +715,139 @@ class ConsultationOut(Record):
     status: Literal["draft", "approved"]
     approved_by: UUID | None
     approved_at: datetime | None
+
+
+# --- Mobile v1.2: classes, schedule, summaries, feedback -----------------------------------
+
+Level = Literal["elementary", "highschool", "college"]
+GRADES = {"elementary": range(0, 7), "highschool": range(7, 13), "college": range(1, 5)}
+StudentName = Annotated[str, Field(min_length=1, max_length=120)]
+
+
+class ClassIn(Schema):
+    level: Level
+    grade: int = Field(ge=0, le=12)
+    section: Annotated[str, Field(min_length=1, max_length=80)]
+    subject: Annotated[str, Field(min_length=1, max_length=120)]
+    students: list[StudentName] = Field(default_factory=list, max_length=200)
+    academic_year_id: UUID | None = None
+    # Omit for last-write-wins (offline edits); send it to refuse overwriting a newer server copy.
+    expected_revision: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def valid_grade(self):
+        if self.grade not in GRADES[self.level]:
+            raise ValueError("Grade is outside the school level (K-6, 7-12 or college years 1-4)")
+        seen = set()
+        unique = []
+        for name in self.students:
+            key = " ".join(name.split()).casefold()
+            if key not in seen:
+                seen.add(key)
+                unique.append(" ".join(name.split()))
+        self.students = unique
+        return self
+
+
+class ClassOut(Record):
+    level: Level
+    grade: int
+    section: str
+    subject: str
+    students: list[str]
+    student_ids: list[UUID]
+    section_id: UUID
+    subject_id: UUID
+    grade_level_id: UUID
+    academic_year_id: UUID
+    archived: bool
+    revision: int
+
+
+EventType = Literal["exam", "quiz", "class", "deadline", "meeting", "reminder"]
+
+
+class EventIn(Schema):
+    title: Annotated[str, Field(min_length=1, max_length=80)]
+    type: EventType
+    starts_at: datetime
+    duration_min: int = Field(default=0, ge=0, le=600)
+    all_day: bool = False
+    class_id: UUID | None = None
+    assessment_id: UUID | None = None
+    notes: Annotated[str, Field(max_length=500)] = ""
+    expected_revision: int | None = Field(default=None, ge=1)
+
+    _starts_utc = field_validator("starts_at")(classmethod(lambda cls, v: aware_utc(v)))
+
+
+class EventOut(Record):
+    title: str
+    type: EventType
+    starts_at: datetime
+    duration_min: int
+    all_day: bool
+    class_id: UUID | None
+    assessment_id: UUID | None
+    notes: str
+    revision: int
+    deleted_at: datetime | None
+
+
+class FeedbackIn(Schema):
+    message: Annotated[str, Field(min_length=5, max_length=2000)]
+    app_version: Annotated[str, Field(max_length=40)] | None = None
+    platform: Annotated[str, Field(max_length=40)] | None = None
+
+
+class FeedbackOut(Schema):
+    id: UUID
+    created_at: datetime
+
+
+class PendingStudent(Schema):
+    student_id: UUID | None
+    name: str
+
+
+class AssessmentSummary(Schema):
+    assessment_id: UUID
+    title: str
+    due_at: datetime | None
+    average: Decimal | None
+    results: int
+    late: int
+    pending: list[PendingStudent]
+
+
+class Bands(Schema):
+    outstanding: int = 0
+    very_satisfactory: int = 0
+    satisfactory: int = 0
+    fairly_satisfactory: int = 0
+    did_not_meet: int = 0
+
+
+class ClassSummary(Schema):
+    class_id: UUID
+    average: Decimal | None
+    results: int
+    late: int
+    pending: int
+    bands: Bands
+    assessments: list[AssessmentSummary]
+
+
+class StudentStat(Schema):
+    student_id: UUID | None
+    name: str
+    on_class_list: bool
+    average: Decimal | None
+    results: int
+    late: int
+    missing: list[UUID]
+    latest_at: datetime | None
+    oldest_at: datetime | None
+
+
+StudentSort = Literal["-average", "average", "latest", "oldest", "late", "missing", "name", "-name"]

@@ -2,7 +2,9 @@ from app import models as m
 from app import schemas as s
 from app.assessment_service import key_questions
 from app.errors import fail
+from app.mobile_service import is_late, link_by_name
 from app.models import now
+from app.schemas import as_utc
 from app.scoring import calculate, validate_client
 
 
@@ -100,7 +102,13 @@ def create_submission(repo, payload):
     if key.assessment_id != assessment.id:
         fail(422, "key_mismatch", "Answer key does not belong to the assessment")
     validate_association(repo, assessment, payload.student_id, payload.enrollment_id)
-    sub = repo.add(m.Submission, **payload.model_dump(exclude={"answers", "client_score"}))
+    data = payload.model_dump(exclude={"answers", "client_score"})
+    if not payload.student_id:
+        # A result for a class assessment is matched to the class list by the student's name.
+        student_id, enrollment_id = link_by_name(repo, assessment, payload.student_label)
+        if student_id:
+            data.update(student_id=student_id, enrollment_id=enrollment_id)
+    sub = repo.add(m.Submission, **data)
     replace_answers(repo, sub, payload.answers)
     score = save_score(repo, sub)
     validate_client(score, payload.client_score)
@@ -152,9 +160,11 @@ def submission_out(repo, sub):
         for c in sub.__table__.columns
         if c.name not in ("automatic_score", "final_score", "possible_score")
     }
+    values["submitted_at"] = as_utc(sub.submitted_at)
     return s.SubmissionOut(
         **values,
         answers=answers_for(repo, sub),
         score=score_for(repo, sub),
         adjustments=[s.AdjustmentOut.model_validate(a) for a in history],
+        late=is_late(sub, repo.get(m.Assessment, sub.assessment_id)),
     )

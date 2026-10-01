@@ -2,12 +2,11 @@
 
 The v1.2 mobile app adds registration with profile details, sections and class lists,
 due dates, late and missing tracking, class rankings, a schedule, exam timers,
-notification preferences and file previews. All of it works on the phone today, offline
-first. None of it is on the server yet, so it does not follow a teacher to a second
-device and is lost if the app is uninstalled.
+notification preferences and file previews. All of it works on the phone offline first,
+and, for signed-in teachers, now syncs with the server (see Progress) so it follows them to
+another phone.
 
-This document lists what the API needs to store that data, roughly in priority order.
-Everything here follows the existing conventions: every row is owner-scoped
+This document lists what the API stores for it, roughly in priority order. Everything here follows the existing conventions: every row is owner-scoped
 (`owner_id` from the verified Supabase token), the client generates UUIDs so offline
 writes are idempotent, edits carry `expected_revision`, and errors use
 `{error: {code, message, request_id}}`.
@@ -27,22 +26,31 @@ writes are idempotent, edits carry `expected_revision`, and errors use
 
 ## Progress (2 October 2026)
 
-**App:** every feature below is built and runs offline on the phone. Each area moves to the
-API once its endpoint exists. **Server:** nothing in this document has been built yet.
-Existing endpoints (auth, uploads, OCR, scoring, materials) are unchanged and still used.
+**Built and connected:** items 1–7, plus preferences and feedback from item 9. The app syncs them
+with the server; nothing below stays phone-only for signed-in teachers. **Not built:** push
+notifications (item 8) and the optional exam sessions and server exports (item 9).
 
-| Area | In the app today | Server status | App work left once the endpoint lands |
-| --- | --- | --- | --- |
-| 1. Profile and picture | Registration and Account settings; only the display name reaches `PUT /v1/me` | Not started | Send school and avatar; upload the photo |
-| 2. Classes and class lists | Level, grade, section, subject and class list, on the phone | Not started | Call `PUT /v1/classes/{id}` on save; download on sync |
-| 3. Class and due date on assessments | Picked in New assessment; the class label still goes in `category` | Not started | Send `class_id` and `due_at` in the upload |
-| 4. Filters and `submitted_at` | Late from approval time; sorting on the phone | Not started | Send `submitted_at`; page with filters |
-| 5. Summary and stats | Computed on the phone (Records tiles, rankings, Pending) | Not started | Use the endpoints for large classes |
-| 6. Events | Calendar stored on the phone | Not started | Sync `PUT /v1/events/{id}` |
-| 7. Incremental sync | Downloads everything each sync | Not started | Store `server_time`, send `updated_since` |
-| 8. Push | In-app bell only; timer alerts in the app | Not started | Register the FCM token; Android local notification for timers |
-| 9. Smaller items | Settings per device; feedback through the share sheet | Not started | Optional |
-| 10. CAPTCHA | Turnstile on sign-in and registration | Supabase configured | Confirm the check passes on a real phone |
+| Area | Server | App |
+| --- | --- | --- |
+| 1. Profile and picture | `GET/PUT /v1/me` with full name, school and avatar; `PUT/GET/DELETE /v1/me/avatar` (256 px JPEG, metadata stripped) | Registration and Account settings upload them; a new phone downloads them |
+| 2. Classes and class lists | `PUT /v1/classes/{id}` (find-or-create grade level, section, subject; students and enrollments), `GET`, `DELETE` (archive) | Every section edit uploads; removals archive; other phones download changes |
+| 3. Class and due date on assessments | `class_id`, `due_at` on create, upload, edit and list; everyone on the class list becomes an expected result | Sent with each new assessment; a class uploads before its assessments |
+| 4. Filters and `submitted_at` | `submitted_at` on upload; `late` on every result; `?class_id`, `?late`, `?updated_since` | The capture time is sent as `submitted_at` and decides "late" |
+| 5. Summary and stats | `GET /v1/classes/{id}/summary` and `/students?sort=` | Not called yet: the phone holds every result after sync and computes the same numbers |
+| 6. Events | `PUT/GET/DELETE /v1/events` with soft deletes | The calendar syncs, including deletions |
+| 7. Incremental sync | `updated_since` and `server_time` on assessments, submissions, materials, classes and events | After the first sync, each sync asks only for changes |
+| 8. Push | Not built | Needs a Firebase project first: the app registers its token, the server sends alerts |
+| 9. Preferences, feedback | `GET/PUT /v1/me/preferences` (merge), `POST /v1/feedback` (20 a day) | Theme, scanner, export, shortcut and notification settings follow the account; Help sends feedback |
+| 10. CAPTCHA | Supabase configuration | Turnstile on sign-in and registration |
+
+Database changes are in `supabase/migrations/0003_mobile.sql`, with row security on the new
+tables. A local SQLite database gains the new tables and columns automatically when the server
+starts.
+
+Verified with `tests/test_mobile.py` (13 tests), the same scenarios on PostgreSQL with RLS
+(`tests/test_postgres_mobile.py`), the existing suites, and an end-to-end run. In that run, one
+browser registered, synced a class, an assessment, a result, an event, a picture and settings;
+a second browser signed in and received them all.
 
 How the app counts things today, so the server can match it:
 - **Pending (papers still to grade):** students on the section's class list with no approved

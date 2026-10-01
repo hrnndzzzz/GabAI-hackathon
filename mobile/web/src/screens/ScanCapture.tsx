@@ -14,6 +14,96 @@ type CamState = 'starting' | 'live' | 'unavailable'
 /** unknown until the stream reports its capabilities; none when this camera has no flash. */
 type TorchState = 'unknown' | 'none' | 'off' | 'on'
 
+// Rear camera found to have a usable flash on this phone, so the scanner opens it first next time.
+const FLASH_CAMERA_KEY = 'gabai-flash-camera'
+
+function rememberedCamera(): string | null {
+  try {
+    return localStorage.getItem(FLASH_CAMERA_KEY)
+  } catch {
+    return null
+  }
+}
+
+function rememberCamera(deviceId: string): void {
+  try {
+    localStorage.setItem(FLASH_CAMERA_KEY, deviceId)
+  } catch {
+    // Storage unavailable: it is simply found again next time.
+  }
+}
+
+const VIDEO = { width: { ideal: 1920 }, height: { ideal: 1080 } }
+
+/**
+ * The phone's main rear camera. Android numbers cameras ("camera 0, facing back"); the lowest
+ * rear one is the primary lens, which has the flash and focuses close, while the default pick
+ * for "environment" is often an ultra-wide without either. Labels exist once camera access is granted.
+ */
+async function mainRearCamera(): Promise<string | null> {
+  try {
+    const rear = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput' && d.deviceId && /back|rear|environment/i.test(d.label))
+    const number = (label: string) => Number(/camera\s*(\d+)/i.exec(label)?.[1] ?? 99)
+    return rear.sort((a, b) => number(a.label) - number(b.label))[0]?.deviceId ?? null
+  } catch {
+    return null
+  }
+}
+
+async function openStream(deviceId?: string | null): Promise<MediaStream> {
+  deviceId ??= await mainRearCamera()
+  if (deviceId) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: false, video: { ...VIDEO, deviceId: { exact: deviceId } } })
+    } catch {
+      // That camera is gone or busy: fall back to the default rear camera.
+    }
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: false, video: { ...VIDEO, facingMode: { ideal: 'environment' } } })
+}
+
+const torchListed = (t?: MediaStreamTrack) => !!(t?.getCapabilities?.() as { torch?: boolean } | undefined)?.torch
+
+/** Switches the torch and reports whether it really changed (some phones ignore the request silently). */
+async function setTrackTorch(track: MediaStreamTrack, on: boolean): Promise<boolean> {
+  try {
+    await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] })
+  } catch {
+    return false
+  }
+  const reported = (track.getSettings() as { torch?: boolean }).torch
+  return reported === undefined ? torchListed(track) : reported === on
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Phones with several rear cameras often give apps a lens without the flash. Android opens one
+ * camera at a time, so this releases the current one and tries the others until one lights up.
+ */
+async function findFlashCamera(current: MediaStreamTrack, alive: () => boolean): Promise<{ stream: MediaStream; deviceId: string } | null> {
+  const currentId = current.getSettings().deviceId
+  const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(
+    (d) => d.kind === 'videoinput' && d.deviceId && d.deviceId !== currentId && !/front|user|selfie/i.test(d.label),
+  )
+  current.stop()
+  for (const d of cameras) {
+    if (!alive()) return null
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { ...VIDEO, deviceId: { exact: d.deviceId } } })
+    } catch {
+      continue
+    }
+    const track = stream.getVideoTracks()[0]
+    await wait(600)
+    // Actually switch it on: a listed torch is not proof, and the light is what the teacher asked for.
+    if (track && (await setTrackTorch(track, true))) return { stream, deviceId: d.deviceId }
+    stream.getTracks().forEach((t) => t.stop())
+  }
+  return null
+}
+
 // The scanner is always dark, whatever the app theme: pin ink to the light-theme value.
 const PINNED = { '--color-ink': '#1a1a1a' } as CSSProperties
 
@@ -36,6 +126,8 @@ export function ScanCapture() {
   const [light, setLight] = useState<number | null>(null)
   const [torch, setTorch] = useState<TorchState>('unknown')
   const [flashing, setFlashing] = useState(false)
+  const [seeking, setSeeking] = useState(false)
+  const mounted = useRef(true)
   const [picking, setPicking] = useState(false)
   const [box, setBox] = useState({ w: 0, h: 0 })
 
@@ -79,11 +171,8 @@ export function ScanCapture() {
       setCam('unavailable')
       return
     }
-    media
-      .getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      })
+    mounted.current = true
+    openStream(rememberedCamera())
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
@@ -95,6 +184,29 @@ export function ScanCapture() {
           video.srcObject = stream
           video.play().catch(() => undefined)
         }
+        // Camera names only appear once a camera is open. If this isn't the main rear lens (which
+        // has the flash and focuses close), switch to it once and remember it for next time.
+        void mainRearCamera().then(async (main) => {
+          const current = stream.getVideoTracks()[0]
+          if (cancelled || !main || !current || main === current.getSettings().deviceId) return
+          current.stop()
+          try {
+            const better = await openStream(main)
+            if (cancelled) return better.getTracks().forEach((t) => t.stop())
+            streamRef.current = better
+            if (videoRef.current) {
+              videoRef.current.srcObject = better
+              videoRef.current.play().catch(() => undefined)
+            }
+            rememberCamera(main)
+          } catch {
+            const back = await openStream(current.getSettings().deviceId).catch(() => null)
+            if (back && !cancelled) {
+              streamRef.current = back
+              if (videoRef.current) videoRef.current.srcObject = back
+            }
+          }
+        })
         // The viewfinder goes live on the first decoded frame (onPlaying); give up if none arrive.
         noFrames = setTimeout(() => {
           if (videoRef.current?.videoWidth) return
@@ -107,11 +219,21 @@ export function ScanCapture() {
       })
     return () => {
       cancelled = true
+      mounted.current = false
       clearTimeout(noFrames)
       streamRef.current?.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
   }, [])
+
+  function attach(stream: MediaStream) {
+    streamRef.current = stream
+    const video = videoRef.current
+    if (video) {
+      video.srcObject = stream
+      video.play().catch(() => undefined)
+    }
+  }
 
   // Boundary lock is simulated; it re-arms whenever the source or paper size changes.
   useEffect(() => {
@@ -154,12 +276,14 @@ export function ScanCapture() {
   const frameX = (box.w - frameW) / 2
   const frameY = (box.h - frameH) / 2
 
-  // Capabilities are only reliable once frames are flowing, so check when the stream goes live.
+  // Capabilities are only reliable once frames are flowing (and some phones add the torch a moment
+  // later), so check when the stream goes live and again shortly after.
   useEffect(() => {
     if (cam !== 'live') return
-    const track = streamRef.current?.getVideoTracks()[0]
-    const caps = track?.getCapabilities?.() as { torch?: boolean } | undefined
-    setTorch(caps?.torch ? 'off' : 'none')
+    const check = () => setTorch((t) => (t === 'on' ? t : torchListed(streamRef.current?.getVideoTracks()[0]) ? 'off' : 'none'))
+    check()
+    const later = window.setTimeout(check, 1200)
+    return () => window.clearTimeout(later)
   }, [cam])
 
   async function toggleTorch() {
@@ -167,17 +291,41 @@ export function ScanCapture() {
       showToast('The flash needs the camera')
       return
     }
-    if (torch === 'none' || torch === 'unknown') {
-      showToast("This camera doesn't offer a flash to apps. Move closer to a light instead.")
+    const track = streamRef.current?.getVideoTracks()[0]
+    if (!track || seeking) return
+    const next = torch !== 'on'
+    // Try even when the camera doesn't list a torch: several phones still honour the request.
+    if (await setTrackTorch(track, next)) {
+      setTorch(next ? 'on' : 'off')
       return
     }
-    const next = torch !== 'on'
-    try {
-      await streamRef.current?.getVideoTracks()[0]?.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] })
-      setTorch(next ? 'on' : 'off')
-    } catch {
-      showToast('Could not switch the flash')
+    if (!next) {
+      setTorch('off')
+      return
     }
+    setSeeking(true)
+    showToast('Looking for the camera with the flash…')
+    const found = await findFlashCamera(track, () => mounted.current)
+    if (!mounted.current) {
+      found?.stream.getTracks().forEach((t) => t.stop())
+      return
+    }
+    setSeeking(false)
+    if (found) {
+      attach(found.stream)
+      rememberCamera(found.deviceId)
+      setTorch('on')
+      showToast('Flash on')
+      return
+    }
+    // No rear camera lit up: go back to the original one.
+    try {
+      attach(await openStream(track.getSettings().deviceId))
+    } catch {
+      setCam('unavailable')
+    }
+    setTorch('none')
+    showToast("This phone doesn't let apps use the flash. Move closer to a light instead.")
   }
 
   function capture() {
@@ -359,10 +507,10 @@ export function ScanCapture() {
 
       <div className="flex shrink-0 items-end justify-between px-8 pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
         <SideAction
-          label={torch === 'on' ? 'Flash on' : torch === 'off' ? 'Flash off' : 'No flash'}
+          label={seeking ? 'Finding…' : torch === 'on' ? 'Flash on' : torch === 'off' ? 'Flash off' : 'Flash'}
           icon={torch === 'on' ? Zap : ZapOff}
           active={torch === 'on'}
-          muted={torch === 'none' || cam !== 'live'}
+          muted={cam !== 'live' || seeking}
           onClick={toggleTorch}
         />
         <button

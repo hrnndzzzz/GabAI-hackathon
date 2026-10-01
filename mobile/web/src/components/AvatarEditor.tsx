@@ -1,5 +1,5 @@
 import { Check, ImagePlus, Trash2 } from 'lucide-react'
-import { AVATAR_COLORS, squarePhoto, type AvatarSpec } from '../lib/avatar'
+import { AVATAR_COLORS, PATTERNS, patternDataUrl, squarePhoto, type AvatarSpec } from '../lib/avatar'
 import { useStore } from '../store'
 import { Avatar } from './Avatar'
 import { usePhotoPicker } from './PhotoPicker'
@@ -40,6 +40,30 @@ export function AvatarEditor({ name, value, onChange }: { name: string; value: A
           </button>
         ))}
       </div>
+      {value.style === 'pattern' && (
+        <div className="w-full">
+          <MonoLabel className="mb-1.5 text-subtle">Pattern</MonoLabel>
+          <div role="radiogroup" aria-label="Pattern" className="grid grid-cols-4 gap-2">
+            {PATTERNS.map((p) => {
+              const on = (value.pattern ?? 'blocks') === p.id
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={p.label}
+                  onClick={() => onChange({ ...value, pattern: p.id })}
+                  className={cx('press flex flex-col items-center gap-1 rounded-lg border-2 border-ink p-1.5 shadow-brut-sm', on ? 'bg-ink text-surface' : 'bg-surface')}
+                >
+                  <img src={patternDataUrl(name || 'Teacher', value.color, p.id)} alt="" className="aspect-square w-full rounded-full border-2 border-ink" />
+                  <span className="text-[10.5px] leading-none font-bold">{p.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
       {value.style !== 'photo' ? (
         <div className="w-full">
           <MonoLabel className="mb-1.5 text-subtle">Background colour</MonoLabel>

@@ -11,7 +11,7 @@ The adapter uses the official `google-genai` Python client, `models.generate_con
 ## Supabase database
 
 1. Create/select the intended Supabase project. Configure Auth and MFA following `security.md`.
-2. Apply `supabase/migrations/0001_schema.sql`, then `0002_security.sql` through the SQL editor or the included migration runner. **Do not** apply `tests/postgres_bootstrap.sql` to Supabase; real Supabase already owns `auth.users`, `auth.uid()` and its Auth roles.
+2. Apply the files in `supabase/migrations` in order (`0001_schema.sql`, `0002_security.sql`, `0003_mobile.sql`, …) through the SQL editor or the included migration runner, which skips files it already applied. **Do not** apply `tests/postgres_bootstrap.sql` to Supabase; real Supabase already owns `auth.users`, `auth.uid()` and its Auth roles.
 3. For the runner, set `MIGRATION_DATABASE_URL` to an administrator **libpq** URL (`postgresql://...`, not SQLAlchemy's `+psycopg`) and run `python scripts/migrate.py`. This is an explicit operator command, never a startup action. It uses a migration ledger and advisory lock. After running, remove the admin URL from the shell/session.
 4. Provision a unique strong password for `teachease_login` through an authorized secure database administration channel. Its role is created without a password. Do not commit this statement or password to scripts. It is `NOINHERIT`, `NOSUPERUSER`, `NOBYPASSRLS`, a member only of `teachease_api` (apart from required platform memberships).
 5. Configure runtime `DATABASE_URL=postgresql+psycopg://teachease_login:<URL-encoded-password>@<host>:5432/postgres?sslmode=require`. Prefer verified TLS with `sslmode=verify-full` and the appropriate CA configuration when available. Use Supabase's documented connection host/network option. For a session pooler, its user naming may need project qualification; confirm `current_user` inside the database is `teachease_login`. Startup fails closed for another current user.
@@ -34,7 +34,7 @@ python -m pytest -m postgres -q
 
 The bootstrap refuses an existing `auth` schema. It creates test-only roles and fictional auth users. The tests verify actual PostgreSQL RLS allow/deny behavior, composite owner FKs, history triggers, concurrent upload retries and transaction rollback. `.github/workflows/backend.yml` runs them against PostgreSQL 17, also builds the container and checks exported contract drift.
 
-Regenerate contract exports only after intentional schema/route changes: `python scripts/export_contracts.py`. Before the initial release the generated 0001 migration can be regenerated; after any shared environment applies it, add a new numbered migration instead of editing an applied file. Refresh dependency locks deliberately in a clean environment with `scripts/lock_dependencies.py` and review upgrades.
+Regenerate contract exports only after intentional schema/route changes: `python scripts/export_contracts.py`. It writes `docs/openapi.json`, `docs/api.md` and `docs/schema.sql` (the full schema generated from the models, for review). Applied migrations are frozen: schema changes go in a new numbered file in `supabase/migrations`, as `0003_mobile.sql` does. Local SQLite development databases gain new tables and columns automatically at startup. Refresh dependency locks deliberately in a clean environment with `scripts/lock_dependencies.py` and review upgrades.
 
 ## Cloud Run
 

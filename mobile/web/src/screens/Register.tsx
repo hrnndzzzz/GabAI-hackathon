@@ -111,8 +111,8 @@ export function Register() {
           <p className="mt-2 max-w-[300px] text-[14px] leading-snug text-subtle">
             {done === 'confirm_email' ? (
               <>
-                We sent a confirmation link to <b className="text-ink">{email.trim()}</b>. Open it, then sign in here. Your classes and
-                picture are saved on this phone and appear after you sign in.
+                We sent a confirmation link to <b className="text-ink">{email.trim()}</b>. Open it on this phone and GabAI will open again,
+                ready to sign in. Your classes and picture are saved on this phone and appear after you sign in.
               </>
             ) : (
               'Sign in to finish setting up two-step verification. Your classes and picture are ready.'

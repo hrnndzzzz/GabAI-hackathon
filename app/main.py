@@ -15,8 +15,9 @@ from starlette.exceptions import HTTPException
 
 from app.ai import Gemini
 from app.config import Settings, get_settings
-from app.db import make_engine
+from app.db import make_engine, upgrade_sqlite
 from app.errors import DomainError
+from app.mobile_routes import router as mobile_router
 from app.models import Base
 from app.routes import router
 from app.schemas import ErrorResponse
@@ -112,6 +113,7 @@ def create_app(settings: Settings | None = None):
     async def lifespan(app):
         if settings.app_env in ("local", "test") and app.state.engine.dialect.name == "sqlite":
             Base.metadata.create_all(app.state.engine)
+            upgrade_sqlite(app.state.engine, Base.metadata)
         if settings.app_env == "production":
             # Fail closed if deployment accidentally uses postgres/service credentials.
             with app.state.engine.connect() as conn:
@@ -226,6 +228,7 @@ def create_app(settings: Settings | None = None):
         return {"status": "ready"}
 
     app.include_router(router)
+    app.include_router(mobile_router)
     return app
 
 

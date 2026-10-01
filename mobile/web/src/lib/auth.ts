@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { getConfig } from './config'
+import { CONFIRM_REDIRECT, isAndroid } from './native'
 
 // Supabase owns passwords, MFA and tokens; the GabAI backend only ever sees the
 // resulting access token (docs/frontend-integration.md, "Login and sensitive data").
@@ -28,6 +29,9 @@ export function friendlyAuthError(message: string): string {
   if (/(invalid|expired).*(code|totp|challenge)|(code|totp|challenge).*(invalid|expired)/i.test(message))
     return 'That code did not work. Check the time on your phone and enter the newest code.'
   if (/fetch|network|load failed/i.test(message)) return 'Could not reach the sign-in service. Check your connection.'
+  // Cloudflare rejected a token that did pass on the phone: the Supabase secret doesn't match the site key.
+  if (/captcha.*invalid-input-(response|secret)/i.test(message))
+    return 'The "I am human" check passed, but the server could not confirm it. The CAPTCHA keys need fixing in Supabase.'
   if (/captcha/i.test(message)) return 'Complete the "I am human" check, then try again.'
   return message
 }
@@ -57,10 +61,29 @@ export async function signUp(
     email,
     password,
     // Display-only profile hints; identity and ownership always come from the verified token.
-    options: { data: { full_name: details.fullName, school: details.school }, ...(captchaToken ? { captchaToken } : {}) },
+    options: {
+      data: { full_name: details.fullName, school: details.school },
+      ...confirmRedirect(),
+      ...(captchaToken ? { captchaToken } : {}),
+    },
   })
   if (error) throw new Error(friendlyAuthError(error.message))
   return data.session ? 'signed_in' : 'confirm_email'
+}
+
+/** On the phone the confirmation link reopens GabAI; elsewhere Supabase uses the project's Site URL. */
+function confirmRedirect(): { emailRedirectTo?: string } {
+  return isAndroid() ? { emailRedirectTo: CONFIRM_REDIRECT } : {}
+}
+
+/** Sends a fresh confirmation email (the old link expired or was lost). */
+export async function resendConfirmation(email: string, captchaToken?: string | null): Promise<void> {
+  const { error } = await requireClient().auth.resend({
+    type: 'signup',
+    email,
+    options: { ...confirmRedirect(), ...(captchaToken ? { captchaToken } : {}) },
+  })
+  if (error) throw new Error(friendlyAuthError(error.message))
 }
 
 export async function currentUser(): Promise<SignedInUser | null> {

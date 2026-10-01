@@ -13,7 +13,7 @@ import { getConfig } from '../lib/config'
 import { FORMATS, type ExportFormat } from '../lib/lessons'
 import { LEVELS, gradeShort } from '../lib/levels'
 import { DEMO_TEACHER } from '../lib/mock'
-import { shareTextFile } from '../lib/native'
+import { isAndroid, shareTextFile } from '../lib/native'
 import { useSettings, type NotifKind, type PhotoAccess, type ThemePref } from '../lib/settings'
 import { SHORTCUTS } from '../lib/shortcuts'
 import { isConnected, useStore, useWorkspace } from '../store'
@@ -82,19 +82,12 @@ export function AccountSettings() {
 
   async function save() {
     setSaving(true)
+    // Saved on the phone straight away; name, school and picture upload with the next sync.
     updateProfile({ fullName: fullName.trim(), school: school.trim(), avatar })
-    // The backend profile currently stores only the display name (PUT /v1/me).
-    if (isConnected(session)) {
-      try {
-        await api.updateMe(fullName.trim())
-      } catch (error) {
-        showToast(`Saved on this phone. Server: ${describeError(error)}`)
-        setSaving(false)
-        return
-      }
-    }
+    if (isConnected(session)) await useStore.getState().syncNow({ quiet: true })
     setSaving(false)
-    showToast('Profile saved')
+    const waiting = useStore.getState().workspaces[`user:${isConnected(session) ? session.userId : ''}`]?.pending.profile
+    showToast(waiting ? 'Saved on this phone. It uploads when you are back online.' : 'Profile saved')
   }
 
   return (
@@ -358,8 +351,8 @@ const FAQ: { q: string; a: string }[] = [
   { q: 'What do the colours mean?', a: 'Each area has one colour: yellow for scanning, the school level for AI (yellow Elementary, green High School, blue College), coral for records. Green means correct or confirmed, coral wrong or a problem, yellow needs review.' },
   { q: 'How do exam timers work?', a: 'Start one from Exam Timer or from an exam on your schedule. It stays green until half the time is left, turns yellow at a quarter, then coral. The clock on the GabAI badge shows the timer that ends soonest.' },
   { q: 'Can I change the bottom buttons?', a: 'Press and hold them. You can keep one to three shortcuts: scan, AI, timer, schedule, records or a new assessment.' },
-  { q: 'What is behind the numbers on the Hub?', a: 'Press and hold any badge, like "3 Pending" or "5 Modules", to peek at exactly what it counts. Tap a row in the preview to open it, or tap outside to close.' },
-  { q: 'What does the strip at the top mean?', a: 'Green: online and synced. Yellow: online but something needs you (demo mode, a sign-in check, an upload issue). Coral: offline or the server can not be reached. Your work is always saved on the phone first.' },
+  { q: 'What is behind the numbers on the Hub?', a: 'Press and hold any badge, like "3 Pending" or "5 Modules", to peek at exactly what it counts. Keep holding, slide onto a row and let go to open it; let go anywhere else to close.' },
+  { q: 'What does the dot on my picture mean?', a: 'Green: online. Yellow: idle (no taps for 5 minutes, or the app is in the background). Red: offline or the server can not be reached. Blinking red: reconnecting. Each change also shows briefly at the top of the screen, and the details are in the account menu. Your work is always saved on the phone first.' },
   { q: 'Where are my exported files?', a: 'Every export opens in a preview first. From there, Share sends it to an app (Drive, Gmail, Files) and Save as PDF prints a handout.' },
 ]
 
@@ -368,7 +361,31 @@ export function Help() {
   const [feedback, setFeedback] = useState(false)
   const [text, setText] = useState('')
   const showToast = useStore((s) => s.showToast)
-  const mode = useStore((s) => s.session?.mode ?? 'signed out')
+  const session = useStore((s) => s.session)
+  const mode = session?.mode ?? 'signed out'
+  const [sending, setSending] = useState(false)
+
+  async function send() {
+    const message = text.trim()
+    // Signed-in teachers send it to the GabAI server; otherwise it goes out through another app.
+    if (isConnected(session)) {
+      setSending(true)
+      try {
+        await api.sendFeedback({ message, app_version: APP_VERSION, platform: isAndroid() ? 'android' : 'web' })
+        showToast('Thanks! Your feedback was sent.')
+        setFeedback(false)
+        setText('')
+        return
+      } catch (error) {
+        showToast(`${describeError(error)} Choose an app to send it instead.`)
+      } finally {
+        setSending(false)
+      }
+    }
+    shareTextFile('gabai-feedback.txt', 'text/plain', `${message}\n\n---\nGabAI ${APP_VERSION} • ${mode} mode • ${navigator.userAgent}\n`)
+    setFeedback(false)
+    setText('')
+  }
   return (
     <div className="flex h-full flex-col">
       <ScreenHeader label="Support" title="Help & support" tone="blue" />
@@ -389,7 +406,7 @@ export function Help() {
         </section>
         <BrutalistCard shadow="sm" className="p-3">
           <p className="text-[13.5px] font-bold">Something not working?</p>
-          <p className="mt-0.5 text-xs leading-snug text-subtle">Write what happened and share it with your school's GabAI contact by email or chat.</p>
+          <p className="mt-0.5 text-xs leading-snug text-subtle">Write what happened. Signed in, it goes straight to the GabAI team; otherwise share it by email or chat.</p>
           <BrutalistButton size="sm" variant="primary" icon={MessageSquareText} className="mt-2.5 w-full" onClick={() => setFeedback(true)}>
             Send feedback
           </BrutalistButton>
@@ -400,22 +417,8 @@ export function Help() {
           title="Send feedback"
           onClose={() => setFeedback(false)}
           footer={
-            <BrutalistButton
-              variant="primary"
-              className="w-full"
-              disabled={text.trim().length < 5}
-              onClick={() => {
-                shareTextFile(
-                  'gabai-feedback.txt',
-                  'text/plain',
-                  `${text.trim()}\n\n---\nGabAI ${APP_VERSION} • ${mode} mode • ${navigator.userAgent}\n`,
-                )
-                setFeedback(false)
-                setText('')
-                showToast('Choose an app to send your feedback')
-              }}
-            >
-              Share feedback
+            <BrutalistButton variant="primary" className="w-full" disabled={text.trim().length < 5 || sending} onClick={() => void send()}>
+              {sending ? 'Sending…' : isConnected(session) ? 'Send feedback' : 'Share feedback'}
             </BrutalistButton>
           }
         >

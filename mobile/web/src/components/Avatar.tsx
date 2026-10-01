@@ -8,7 +8,7 @@ export function Avatar({ name, spec, size = 40, className }: { name: string; spe
   const box = { width: size, height: size }
   const ring = cx('shrink-0 rounded-full border-2 border-ink', className)
   if (avatar.style === 'photo' && avatar.photo) return <img src={avatar.photo} alt="" style={box} className={cx(ring, 'object-cover')} />
-  if (avatar.style === 'pattern') return <img src={patternDataUrl(name, avatar.color)} alt="" style={box} className={ring} />
+  if (avatar.style === 'pattern') return <img src={patternDataUrl(name, avatar.color, avatar.pattern)} alt="" style={box} className={ring} />
   return (
     <span
       aria-hidden

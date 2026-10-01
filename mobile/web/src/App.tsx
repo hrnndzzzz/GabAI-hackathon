@@ -1,11 +1,12 @@
 import { useEffect, type ComponentType } from 'react'
 import { FilePreview } from './components/FilePreview'
 import { MfaPanel } from './components/MfaPanel'
-import { StatusBar } from './components/StatusBar'
+import { StatusIsland } from './components/StatusIsland'
+import { installNetListeners } from './lib/net'
 import { ToastHost } from './components/Toast'
 import { currentUser } from './lib/auth'
 import { runBackHandler } from './lib/back'
-import { setThemeChrome } from './lib/native'
+import { setThemeChrome, takeAuthEvent } from './lib/native'
 import { resolvedTheme, useSettings } from './lib/settings'
 import { CalendarScreen } from './screens/Calendar'
 import { AiDraft } from './screens/AiDraft'
@@ -22,7 +23,7 @@ import { ScanOcr } from './screens/ScanOcr'
 import { ScanReview } from './screens/ScanReview'
 import { About, AccountSettings, Help, NotificationSettings, SystemSettings } from './screens/Settings'
 import { TimerScreen } from './screens/Timer'
-import { isConnected, useStore, type Screen } from './store'
+import { applyingAccountSettings, isConnected, useStore, type Screen } from './store'
 
 const SCREENS: Record<Screen, ComponentType> = {
   hub: Hub,
@@ -58,6 +59,9 @@ export default function App() {
   const connectedUser = isConnected(session) ? session.userId : null
   useAppearance()
   useTimerAlerts()
+  useAuthLinks()
+  useSettingsSync()
+  useEffect(() => installNetListeners(), [])
 
   let screen: Screen | 'login' | 'register' = session ? stack[stack.length - 1] : authView === 'register' ? 'register' : 'login'
   // Flow screens need their in-memory session; fall back if it is missing.
@@ -78,8 +82,14 @@ export default function App() {
     const onOffline = () => useStore.setState({ connection: 'offline' })
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
+    // While the server can't be reached, keep trying quietly (the status shows "Reconnecting").
+    const retry = window.setInterval(() => {
+      const { connection, syncing, syncNow } = useStore.getState()
+      if (navigator.onLine && connection === 'offline' && !syncing) void syncNow({ quiet: true })
+    }, 30000)
     return () => {
       cancelled = true
+      window.clearInterval(retry)
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
@@ -101,8 +111,7 @@ export default function App() {
   const Current = screen === 'login' ? Login : screen === 'register' ? Register : SCREENS[screen]
   return (
     <div className="relative mx-auto flex h-full max-w-[420px] flex-col overflow-hidden bg-canvas min-[440px]:border-x-2 min-[440px]:border-ink">
-      {/* The scanner is a full-bleed dark camera view; every other screen shows the network strip. */}
-      {screen !== 'scan-capture' && <StatusBar />}
+      <StatusIsland />
       <div key={`${screen}-${stack.length}`} className="flex min-h-0 flex-1 animate-screen-in flex-col">
         <Current />
       </div>
@@ -121,6 +130,57 @@ export default function App() {
       <ToastHost />
     </div>
   )
+}
+
+/** Settings changed on this phone follow the account to other phones (timers stay per phone). */
+function useSettingsSync() {
+  useEffect(() => {
+    let timer: number | undefined
+    const unsubscribe = useSettings.subscribe((now, before) => {
+      const changed =
+        now.theme !== before.theme ||
+        now.reduceMotion !== before.reduceMotion ||
+        now.paperSize !== before.paperSize ||
+        now.defaultFormat !== before.defaultFormat ||
+        now.dock !== before.dock ||
+        now.notify !== before.notify
+      if (!changed || applyingAccountSettings || !isConnected(useStore.getState().session)) return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => useStore.getState().markPreferencesPending(), 1500)
+    })
+    return () => {
+      window.clearTimeout(timer)
+      unsubscribe()
+    }
+  }, [])
+}
+
+/** The email-confirmation link reopens the app: say what happened on the sign-in screen. */
+function useAuthLinks() {
+  useEffect(() => {
+    const handle = () => {
+      const event = takeAuthEvent()
+      if (!event) return
+      const store = useStore.getState()
+      const text =
+        event.kind === 'confirmed'
+          ? 'Email confirmed. Sign in to finish setting up your account.'
+          : event.kind === 'expired'
+            ? 'That confirmation link has expired or was already used. If you confirmed before, just sign in; otherwise send a new link.'
+            : `The confirmation link didn't work${event.message ? `: ${event.message}` : '.'} You can send a new link.`
+      if (store.session) {
+        store.showToast(event.kind === 'confirmed' ? 'Email confirmed' : text)
+        return
+      }
+      store.setAuthView('login')
+      store.setAuthNotice({ tone: event.kind === 'confirmed' ? 'green' : 'coral', text, resend: event.kind !== 'confirmed' })
+    }
+    handle()
+    window.gabaiAuthEvent = handle
+    return () => {
+      delete window.gabaiAuthEvent
+    }
+  }, [])
 }
 
 /** Applies the theme and motion settings to the document, following the system when asked. */

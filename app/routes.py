@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -23,6 +23,7 @@ from app.assessment_service import (
 from app.auth import Principal, get_principal
 from app.db import get_db
 from app.errors import fail
+from app.mobile_service import ensure_profile, is_late, profile_out
 from app.organization_service import close_enrollment, validate_organization
 from app.performance import performance
 from app.repository import Repo, check_revision, draft_only
@@ -42,30 +43,47 @@ Auth = Annotated[Principal, Depends(get_principal)]
 DB = Annotated[Session, Depends(get_db, scope="function")]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0, le=100000)]
+UpdatedSince = Annotated[
+    datetime | None,
+    Query(description="Only records changed after this time (send the previous page's server_time)"),
+]
+
+
+def changed_since(model, updated_since):
+    if updated_since is None:
+        return []
+    if updated_since.tzinfo is None:
+        fail(422, "timezone_required", "updated_since requires a timezone")
+    return [model.updated_at > s.as_utc(updated_since)]
 
 
 @router.get("/me", response_model=s.ProfileOut, tags=["Authentication"])
 def me(request: Request, user: Auth, db: DB):
     repo = Repo(db, user.id)
     profile = db.scalar(repo.query(m.Profile))
-    return s.ProfileOut(
-        id=user.id,
-        display_name=profile.display_name if profile else "Teacher",
-        mfa_required=request.app.state.settings.require_mfa,
-    )
+    return profile_out(user.id, profile, request.app.state.settings.require_mfa)
 
 
-@router.put("/me", response_model=s.ProfileOut, tags=["Authentication"])
+@router.put(
+    "/me",
+    response_model=s.ProfileOut,
+    tags=["Authentication"],
+    description="display_name is required; full_name, school_name and avatar change only when sent.",
+)
 def edit_me(payload: s.ProfileEdit, request: Request, user: Auth, db: DB):
-    repo = Repo(db, user.id)
-    profile = db.scalar(repo.query(m.Profile).with_for_update())
-    if profile:
-        profile.display_name = payload.display_name
-    else:
-        repo.add(m.Profile, id=user.id, display_name=payload.display_name)
-    return s.ProfileOut(
-        id=user.id, display_name=payload.display_name, mfa_required=request.app.state.settings.require_mfa
-    )
+    profile = ensure_profile(Repo(db, user.id), user.id)
+    profile.display_name = payload.display_name
+    sent = payload.model_fields_set
+    if "full_name" in sent:
+        profile.full_name = payload.full_name or None
+    if "school_name" in sent:
+        profile.school_name = payload.school_name or None
+    if "avatar" in sent and payload.avatar:
+        profile.avatar_style = payload.avatar.style
+        profile.avatar_color = payload.avatar.color
+        profile.avatar_pattern = payload.avatar.pattern
+    db.flush()
+    return profile_out(user.id, profile, request.app.state.settings.require_mfa)
 
 
 @router.post("/assessments", response_model=s.AssessmentOut, status_code=201, tags=["Assessments"])
@@ -83,10 +101,16 @@ def assessment_list(
     offset: Offset = 0,
     subject_id: UUID | None = None,
     term_id: UUID | None = None,
+    class_id: UUID | None = None,
     archived: bool = False,
+    updated_since: UpdatedSince = None,
 ):
+    server_time = m.now()
     repo = Repo(db, user.id)
-    filters = [m.Assessment.archived == archived]
+    filters = [m.Assessment.archived == archived, *changed_since(m.Assessment, updated_since)]
+    if class_id:
+        repo.get(m.TeachingClass, class_id)
+        filters.append(m.Assessment.class_id == class_id)
     if subject_id:
         repo.get(m.Subject, subject_id)
         filters.append(m.Assessment.subject_id == subject_id)
@@ -94,7 +118,13 @@ def assessment_list(
         repo.get(m.Term, term_id)
         filters.append(m.Assessment.term_id == term_id)
     rows, more = repo.page(m.Assessment, limit, offset, *filters)
-    return s.Page(items=[assessment_out(repo, a) for a in rows], limit=limit, offset=offset, has_more=more)
+    return s.Page(
+        items=[assessment_out(repo, a) for a in rows],
+        limit=limit,
+        offset=offset,
+        has_more=more,
+        server_time=server_time,
+    )
 
 
 @router.get("/assessments/{assessment_id}", response_model=s.AssessmentOut, tags=["Assessments"])
@@ -108,6 +138,17 @@ def assessment_edit(assessment_id: UUID, payload: s.AssessmentEdit, user: Auth, 
     repo = Repo(db, user.id)
     assessment = repo.get(m.Assessment, assessment_id, lock=True)
     assessment.title, assessment.description = payload.title, payload.description
+    sent = payload.model_fields_set
+    if "due_at" in sent:
+        assessment.due_at = payload.due_at
+    if "class_id" in sent and payload.class_id != assessment.class_id:
+        if payload.class_id:
+            repo.get(m.TeachingClass, payload.class_id)
+        assessment.class_id = payload.class_id
+        if payload.class_id:
+            from app.mobile_service import expect_class
+
+            expect_class(repo, assessment)
     db.flush()
     return assessment_out(repo, assessment)
 
@@ -177,9 +218,22 @@ def submission_list(
     assessment_id: UUID | None = None,
     student_id: UUID | None = None,
     status: Literal["draft", "approved"] | None = None,
+    class_id: UUID | None = None,
+    late: bool | None = None,
+    updated_since: UpdatedSince = None,
 ):
+    server_time = m.now()
     repo = Repo(db, user.id)
-    filters = []
+    filters = changed_since(m.Submission, updated_since)
+    if class_id:
+        repo.get(m.TeachingClass, class_id)
+        filters.append(
+            m.Submission.assessment_id.in_(
+                select(m.Assessment.id).where(
+                    m.Assessment.owner_id == user.id, m.Assessment.class_id == class_id
+                )
+            )
+        )
     if assessment_id:
         repo.get(m.Assessment, assessment_id)
         filters.append(m.Submission.assessment_id == assessment_id)
@@ -188,9 +242,21 @@ def submission_list(
         filters.append(m.Submission.student_id == student_id)
     if status:
         filters.append(m.Submission.status == status)
-    rows, more = repo.page(m.Submission, limit, offset, *filters)
+    if late is not None:
+        # "Late" compares times across rows and devices, so it is decided in Python, in UTC.
+        everything = repo.rows(m.Submission, *filters)
+        everything.sort(key=lambda sub: (s.as_utc(sub.created_at), sub.id))
+        due = {a.id: a for a in repo.rows(m.Assessment)}
+        matched = [sub for sub in everything if is_late(sub, due[sub.assessment_id]) == late]
+        rows, more = matched[offset : offset + limit], len(matched) > offset + limit
+    else:
+        rows, more = repo.page(m.Submission, limit, offset, *filters)
     return s.Page(
-        items=[submission_out(repo, sub) for sub in rows], limit=limit, offset=offset, has_more=more
+        items=[submission_out(repo, sub) for sub in rows],
+        limit=limit,
+        offset=offset,
+        has_more=more,
+        server_time=server_time,
     )
 
 
@@ -251,6 +317,11 @@ def submission_associate(submission_id: UUID, payload: s.Association, user: Auth
     return submission_out(repo, sub)
 
 
+# Fields added after offline uploads shipped. Left out when empty, so retries of uploads made by
+# older app versions still match the receipt that was stored for them.
+LATER_UPLOAD_FIELDS = {"assessment": ("class_id", "due_at"), "submission": ("submitted_at",)}
+
+
 def upload_hash(payload):
     def canonical(value):
         if isinstance(value, dict):
@@ -263,8 +334,14 @@ def upload_hash(payload):
             return str(value)
         return value
 
+    data = payload.model_dump()
+    for part, names in LATER_UPLOAD_FIELDS.items():
+        if isinstance(data.get(part), dict):
+            for name in names:
+                if data[part].get(name) is None:
+                    data[part].pop(name, None)
     return hashlib.sha256(
-        json.dumps(canonical(payload.model_dump()), sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(canonical(data), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
 
@@ -388,10 +465,17 @@ def material_generate(payload: s.GenerateMaterial, request: Request, user: Auth,
 
 
 @router.get("/materials", response_model=s.Page[s.MaterialOut], tags=["Teaching materials"])
-def material_list(user: Auth, db: DB, limit: Limit = 20, offset: Offset = 0):
-    rows, more = Repo(db, user.id).page(m.Material, limit, offset)
+def material_list(
+    user: Auth, db: DB, limit: Limit = 20, offset: Offset = 0, updated_since: UpdatedSince = None
+):
+    server_time = m.now()
+    rows, more = Repo(db, user.id).page(m.Material, limit, offset, *changed_since(m.Material, updated_since))
     return s.Page(
-        items=[s.MaterialOut.model_validate(row) for row in rows], limit=limit, offset=offset, has_more=more
+        items=[s.MaterialOut.model_validate(row) for row in rows],
+        limit=limit,
+        offset=offset,
+        has_more=more,
+        server_time=server_time,
     )
 
 

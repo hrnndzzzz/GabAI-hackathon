@@ -55,6 +55,8 @@ export interface LocalSubmission {
   adjustments: Adjustment[]
   score: Score
   approvedISO: string
+  /** When the paper was captured (handed in); decides "late". Older results fall back to approvedISO. */
+  submittedISO?: string | null
   feedback: string
   origin: Origin
   sync: SyncState
@@ -86,6 +88,21 @@ export interface TeacherProfile {
   avatar: AvatarSpec
 }
 
+/** Changes made on this phone that the server doesn't have yet (connected accounts only). */
+export interface PendingSync {
+  classes: string[]
+  archivedClasses: string[]
+  events: string[]
+  deletedEvents: string[]
+  profile: boolean
+  avatar: 'upload' | 'delete' | null
+  preferences: boolean
+}
+
+export function noPending(): PendingSync {
+  return { classes: [], archivedClasses: [], events: [], deletedEvents: [], profile: false, avatar: null, preferences: false }
+}
+
 export interface Workspace {
   displayName: string
   profile: TeacherProfile | null
@@ -101,6 +118,11 @@ export interface Workspace {
   readNotifications: string[]
   localSync: boolean
   lastSyncedISO: string | null
+  pending: PendingSync
+  /** The server's clock at the last download; the next sync asks only for changes after it. */
+  serverTime: string | null
+  /** photo_updated_at of the profile picture this phone already has. */
+  avatarSyncedISO: string | null
 }
 
 export function emptyWorkspace(displayName: string): Workspace {
@@ -117,6 +139,9 @@ export function emptyWorkspace(displayName: string): Workspace {
     readNotifications: [],
     localSync: true,
     lastSyncedISO: null,
+    pending: noPending(),
+    serverTime: null,
+    avatarSyncedISO: null,
   }
 }
 
@@ -154,7 +179,7 @@ export function submissionRow(s: LocalSubmission, assessment?: LocalAssessment):
     missed: missedNumbers(s.score),
     feedback: s.feedback,
     sync: s.sync,
-    late: !!assessment?.dueISO && Date.parse(s.approvedISO) > Date.parse(assessment.dueISO),
+    late: !!assessment?.dueISO && Date.parse(s.submittedISO ?? s.approvedISO) > Date.parse(assessment.dueISO),
   }
 }
 

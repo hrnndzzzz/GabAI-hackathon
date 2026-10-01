@@ -28,12 +28,79 @@ export interface Page<T> {
   limit: number
   offset: number
   has_more: boolean
+  server_time?: string | null
+}
+
+export interface AvatarOut {
+  style: 'initials' | 'pattern' | 'photo'
+  color: string | null
+  pattern: string | null
+  has_photo: boolean
+  photo_updated_at: string | null
 }
 
 export interface ProfileOut {
   id: string
   display_name: string
   mfa_required: boolean
+  full_name?: string | null
+  school_name?: string | null
+  avatar?: AvatarOut | null
+  updated_at?: string | null
+}
+
+export interface ProfileEdit {
+  display_name: string
+  full_name?: string | null
+  school_name?: string | null
+  avatar?: { style: 'initials' | 'pattern' | 'photo'; color?: string | null; pattern?: string | null }
+}
+
+export interface PreferencesBody {
+  notify?: Partial<Record<'urgent' | 'sync' | 'timer' | 'schedule' | 'tips', boolean>>
+  theme?: 'light' | 'dark' | 'system'
+  reduce_motion?: boolean
+  paper_size?: 'A4' | 'Letter'
+  default_format?: 'pdf' | 'markdown' | 'csv'
+  dock?: string[]
+}
+
+export interface PreferencesOut extends PreferencesBody {
+  updated_at: string | null
+}
+
+export interface ClassBody {
+  level: 'elementary' | 'highschool' | 'college'
+  grade: number
+  section: string
+  subject: string
+  students: string[]
+}
+
+export interface ClassOut extends ClassBody {
+  id: string
+  student_ids: string[]
+  archived: boolean
+  revision: number
+  updated_at: string
+}
+
+export interface EventBody {
+  title: string
+  type: 'exam' | 'quiz' | 'class' | 'deadline' | 'meeting' | 'reminder'
+  starts_at: string
+  duration_min: number
+  all_day: boolean
+  class_id: string | null
+  assessment_id: string | null
+  notes: string
+}
+
+export interface EventOut extends EventBody {
+  id: string
+  revision: number
+  deleted_at: string | null
+  updated_at: string
 }
 
 export interface QuestionOut extends KeyQuestion {
@@ -57,6 +124,8 @@ export interface AssessmentCreate {
   template_id: string
   assessment_date: string
   category?: string | null
+  class_id?: string | null
+  due_at?: string | null
   answer_key: { id: string; questions: (KeyQuestion & { competency_ids: string[] })[] }
 }
 
@@ -68,6 +137,8 @@ export interface AssessmentOut {
   assessment_date: string
   category: string | null
   archived: boolean
+  class_id?: string | null
+  due_at?: string | null
   answer_keys: KeyOut[]
   created_at: string
 }
@@ -86,6 +157,7 @@ export interface SubmissionCreate {
   student_label: string
   source: 'on_device' | 'gemini' | 'manual'
   answers: Answer[]
+  submitted_at?: string | null
 }
 
 export interface OfflineSubmission {
@@ -108,6 +180,8 @@ export interface SubmissionOut {
   score: Score & { answer_key_id: string; answer_key_version: number; key_verified: boolean }
   approved_at: string | null
   local_approved_at: string | null
+  submitted_at?: string | null
+  late?: boolean
   created_at: string
 }
 
@@ -221,24 +295,69 @@ async function send<T>(method: string, path: string, body?: Body): Promise<T> {
     const retry = Number(response.headers.get('Retry-After'))
     throw new ApiError(response.status, code, message, requestId, Number.isFinite(retry) && retry > 0 ? retry : undefined)
   }
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
-async function allPages<T>(path: string, maxPages = 10): Promise<T[]> {
+export interface Listing<T> {
+  items: T[]
+  /** Server clock when the first page was read: the next sync's updated_since. */
+  serverTime: string | null
+}
+
+/** Every page of a list, optionally only the records changed after `since`. */
+/** GET that returns a file (the profile picture), or null when there is none. */
+async function fetchBlob(path: string): Promise<Blob | null> {
+  const config = getConfig()
+  if (!config) return null
+  const token = await accessToken()
+  const response = await fetch(`${config.apiBaseUrl}/v1${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => null)
+  if (!response) throw new ApiError(0, 'network_error', 'Could not reach the GabAI server. Check your connection.')
+  if (response.status === 404) return null
+  if (!response.ok) throw new ApiError(response.status, 'http_error', `Request failed (${response.status})`)
+  return response.blob()
+}
+
+async function allPages<T>(path: string, since?: string | null, maxPages = 20): Promise<Listing<T>> {
   const items: T[] = []
+  let serverTime: string | null = null
+  const filter = since ? `&updated_since=${encodeURIComponent(since)}` : ''
   const join = path.includes('?') ? '&' : '?'
   for (let page = 0; page < maxPages; page++) {
-    const result = await send<Page<T>>('GET', `${path}${join}limit=100&offset=${page * 100}`)
+    const result = await send<Page<T>>('GET', `${path}${join}limit=100&offset=${page * 100}${filter}`)
+    if (page === 0) serverTime = result.server_time ?? null
     items.push(...result.items)
     if (!result.has_more) break
   }
-  return items
+  return { items, serverTime }
+}
+
+/** Requests that answer 204 No Content. */
+async function sendEmpty(method: string, path: string, body?: Body): Promise<void> {
+  await send<undefined>(method, path, body)
 }
 
 export const api = {
   me: () => send<ProfileOut>('GET', '/me'),
-  updateMe: (displayName: string) => send<ProfileOut>('PUT', '/me', { json: { display_name: displayName.slice(0, 120) } }),
-  listAssessments: () => allPages<AssessmentOut>('/assessments'),
+  updateMe: (body: ProfileEdit) => send<ProfileOut>('PUT', '/me', { json: body }),
+  uploadAvatar: (image: Blob) => {
+    const form = new FormData()
+    form.append('file', image, 'avatar.jpg')
+    return sendEmpty('PUT', '/me/avatar', { form })
+  },
+  deleteAvatar: () => sendEmpty('DELETE', '/me/avatar'),
+  avatar: () => fetchBlob('/me/avatar'),
+  preferences: () => send<PreferencesOut>('GET', '/me/preferences'),
+  savePreferences: (body: PreferencesBody) => send<PreferencesOut>('PUT', '/me/preferences', { json: body }),
+  listClasses: (since?: string | null) => allPages<ClassOut>('/classes', since),
+  saveClass: (id: string, body: ClassBody) => send<ClassOut>('PUT', `/classes/${id}`, { json: body }),
+  archiveClass: (id: string) => send<ClassOut>('DELETE', `/classes/${id}`),
+  listEvents: (since?: string | null) => allPages<EventOut>('/events', since),
+  saveEvent: (id: string, body: EventBody) => send<EventOut>('PUT', `/events/${id}`, { json: body }),
+  deleteEvent: (id: string) => send<EventOut>('DELETE', `/events/${id}`),
+  sendFeedback: (body: { message: string; app_version: string; platform: string }) =>
+    send<{ id: string; created_at: string }>('POST', '/feedback', { json: body }),
+  listAssessments: (since?: string | null) => allPages<AssessmentOut>('/assessments', since),
   uploadAssessment: (assessment: AssessmentCreate) =>
     send<UploadOut>('POST', '/uploads/assessments', { json: { assessment, key_teacher_verified: true } }),
   previewScore: (answerKeyId: string, answers: Answer[], adjustments: Adjustment[], clientScore: ClientScore) =>
@@ -247,14 +366,14 @@ export const api = {
     }),
   uploadSubmission: (payload: OfflineSubmission) =>
     send<UploadOut>('POST', '/uploads/submissions', { json: payload }),
-  listApprovedSubmissions: () => allPages<SubmissionOut>('/submissions?status=approved'),
+  listApprovedSubmissions: (since?: string | null) => allPages<SubmissionOut>('/submissions?status=approved', since),
   ocr: (purpose: 'reference' | 'student', image: Blob) => {
     const form = new FormData()
     form.append('file', image, `paper.${image.type === 'image/png' ? 'png' : 'jpg'}`)
     return send<OCROut>('POST', `/ocr/${purpose}`, { form })
   },
   generateMaterial: (payload: GenerateMaterial) => send<MaterialOut>('POST', '/materials/generate', { json: payload }),
-  listMaterials: () => allPages<MaterialOut>('/materials'),
+  listMaterials: (since?: string | null) => allPages<MaterialOut>('/materials', since),
   editMaterial: (id: string, expectedRevision: number, content: MaterialContent) =>
     send<MaterialOut>('PATCH', `/materials/${id}`, { json: { expected_revision: expectedRevision, content } }),
   reviewMaterial: (id: string, expectedRevision: number) =>
@@ -305,6 +424,12 @@ export function describeError(error: unknown): string {
       return 'This was changed elsewhere. Reload it before saving again.'
     case 'upload_conflict':
       return 'The server already has a different record with this ID.'
+    case 'unknown_class':
+      return 'Its section has not reached the server yet. It will upload after the section does.'
+    case 'feedback_limit':
+      return "That's a lot of feedback today. Thank you! Try again tomorrow."
+    case 'too_many_classes':
+      return 'You can keep up to 60 active sections. Remove one you no longer teach.'
     default:
       return error.message
   }

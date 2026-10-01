@@ -1,11 +1,13 @@
-import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ClipboardPaste, Trash2 } from 'lucide-react'
+import { useEffect, useState, type ClipboardEvent } from 'react'
 import { classLabel, levelTone, sortClasses, type TeacherClass } from '../lib/classes'
 import { LEVELS, LEVEL_ORDER, gradeLabel, subjectsFor, type Level } from '../lib/levels'
+import { readClipboardText } from '../lib/native'
+import { parseRoster } from '../lib/roster'
 import { newId } from '../lib/workspace'
 import { Select, type SelectOption } from './Select'
 import { Sheet } from './Sheet'
-import { BrutalistButton, MonoLabel, TONE_BG, cx } from './ui'
+import { BrutalistButton, MonoLabel, TONE_BG, accentVariant, cx } from './ui'
 
 const ADD = '__add__'
 
@@ -100,6 +102,7 @@ export function ClassSheet({
   const [section, setSection] = useState(initial?.section ?? '')
   const [subject, setSubject] = useState(initial?.subject ?? subjectsFor(level, grade)[0])
   const [students, setStudents] = useState((initial?.students ?? []).join('\n'))
+  const [pasteNote, setPasteNote] = useState<string | null>(null)
   const subjects = subjectsFor(level, grade)
   const roster = students
     .split('\n')
@@ -107,6 +110,33 @@ export function ClassSheet({
     .filter(Boolean)
   const draft = { level, grade, section, subject }
   const valid = section.trim().length > 0 && subject.trim().length > 0
+
+  /** Adds pasted names (one per line, or spreadsheet rows) after the ones already typed. */
+  function addPasted(text: string) {
+    const names = parseRoster(text)
+    if (!names.length) {
+      setPasteNote('No names found in what you pasted.')
+      return
+    }
+    const existing = new Set(roster.map((n) => n.toLowerCase()))
+    const fresh = names.filter((n) => !existing.has(n.toLowerCase()))
+    setStudents([...roster, ...fresh].join('\n'))
+    setPasteNote(`Added ${fresh.length} ${fresh.length === 1 ? 'student' : 'students'}${names.length > fresh.length ? ` (${names.length - fresh.length} already listed)` : ''}.`)
+  }
+
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const text = e.clipboardData.getData('text')
+    // A single name pastes normally; lists and spreadsheet rows are tidied into one name per line.
+    if (!/[\n\t]/.test(text.trim())) return
+    e.preventDefault()
+    addPasted(text)
+  }
+
+  async function pasteFromClipboard() {
+    const text = await readClipboardText()
+    if (text?.trim()) addPasted(text)
+    else setPasteNote('The clipboard is empty. Copy the names in your spreadsheet first.')
+  }
 
   function changeLevel(next: Level) {
     setLevel(next)
@@ -128,11 +158,11 @@ export function ClassSheet({
             </BrutalistButton>
           )}
           <BrutalistButton
-            variant="yellow"
+            variant={accentVariant(levelTone(level))}
             disabled={!valid}
             onClick={() => onSave({ id: initial?.id ?? newId(), level, grade, section: section.trim(), subject: subject.trim(), students: [...new Set(roster)] })}
           >
-            Save section
+            {section.trim() ? 'Save section' : 'Name the section to save'}
           </BrutalistButton>
         </div>
       }
@@ -191,14 +221,21 @@ export function ClassSheet({
           </span>
           <textarea
             value={students}
-            onChange={(e) => setStudents(e.target.value)}
+            onPaste={onPaste}
+            onChange={(e) => {
+              setStudents(e.target.value)
+              setPasteNote(null)
+            }}
             rows={5}
             placeholder={'Juan dela Cruz\nMaria Santos'}
             className="w-full resize-none rounded-lg border-2 border-ink bg-surface p-2.5 text-[13.5px] leading-relaxed outline-none [field-sizing:content] focus:shadow-brut"
           />
         </label>
-        <p className="flex items-center gap-1.5 text-xs text-subtle">
-          <Plus size={13} aria-hidden /> Paste a whole list from a spreadsheet; each line becomes a student.
+        <BrutalistButton size="sm" variant="secondary" icon={ClipboardPaste} className="w-full" onClick={() => void pasteFromClipboard()}>
+          Paste list from spreadsheet
+        </BrutalistButton>
+        <p className={cx('text-xs', pasteNote ? 'font-semibold' : 'text-subtle')} role="status">
+          {pasteNote ?? 'Copy the name column (or whole rows) in Excel or Google Sheets, then tap Paste. Row numbers, LRNs and headers are skipped.'}
         </p>
       </div>
     </Sheet>

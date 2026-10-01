@@ -33,6 +33,7 @@ import { ClassSheet } from '../components/ClassFields'
 import { CollapsibleCategory } from '../components/CollapsibleCategory'
 import { Peek, PeekRow, PeekTotal } from '../components/Peek'
 import { BrandPill } from '../components/Logo'
+import { StatusDot } from '../components/StatusIsland'
 import { Sheet } from '../components/Sheet'
 import { SwipeRow } from '../components/SwipeRow'
 import { Badge, BrutalistButton, BrutalistCard, IconButton, IconTile, MonoLabel, TONE_BG, cx, type Tone } from '../components/ui'
@@ -46,6 +47,7 @@ import { MODES, type Mode } from '../lib/lessons'
 import { LEVELS, gradeShort, levelOf } from '../lib/levels'
 import { modeLabel } from '../lib/materials'
 import { DEMO_TEACHER } from '../lib/mock'
+import { NET_LEVELS, useNetStatus, type NetStatus } from '../lib/net'
 import { recordRows } from '../lib/records'
 import { MAX_SHORTCUTS, MIN_SHORTCUTS, formatClock, isRunning, remaining, timerTone, useSettings, type NotifKind, type ShortcutId } from '../lib/settings'
 import { SHORTCUTS, SHORTCUT_ORDER } from '../lib/shortcuts'
@@ -109,7 +111,7 @@ export function Hub() {
                 </Peek>
               )}
               {urgent.length > 0 && (
-                <Peek title={`${urgent.length} due within a day`} content={(close) => <AssessmentPeek list={urgent} close={close} note="Due today, overdue, or flagged urgent. Tap one to start scanning." />}>
+                <Peek title={`${urgent.length} due within a day`} content={(close) => <AssessmentPeek list={urgent} close={close} note="Due today, overdue, or flagged urgent. Slide onto one and let go to scan it." />}>
                   <Badge variant="urgent" pulse mono>
                     {urgent.length} Urgent
                   </Badge>
@@ -203,7 +205,7 @@ function AssessmentPeek({ list, close, note }: { list: LocalAssessment[]; close:
         )
       })}
       {!list.length && <p className="px-2 py-3 text-center text-[13px] text-subtle">No assessments yet.</p>}
-      <PeekTotal>{note ?? (papers ? `${papers} ${papers === 1 ? 'paper' : 'papers'} still to grade. Tap one to start scanning.` : 'Every expected paper has a result.')}</PeekTotal>
+      <PeekTotal>{note ?? (papers ? `${papers} ${papers === 1 ? 'paper' : 'papers'} still to grade. Slide onto one and let go to scan it.` : 'Every expected paper has a result.')}</PeekTotal>
     </>
   )
 }
@@ -226,7 +228,7 @@ function IssuesPeek({ close }: { close: () => void }) {
           }}
         />
       ))}
-      <PeekTotal>Never retried automatically. Open one to retry, keep it as a new record, or stop uploading it.</PeekTotal>
+      <PeekTotal>Never retried automatically. Slide onto one and let go to fix it in Records.</PeekTotal>
     </>
   )
 }
@@ -288,7 +290,7 @@ function RecordsPeek({ close }: { close: () => void }) {
       )}
       {unassigned > 0 && <PeekRow tone="white" title="Not in a section" detail="Results whose section was removed or never set" count={String(unassigned)} />}
       <PeekTotal>
-        {rows.length} {rows.length === 1 ? 'result' : 'results'} in total. The number on each row is that section's results.
+        {rows.length} {rows.length === 1 ? 'result' : 'results'} in total. The number on each row is that section's results. Let go on one to open it.
       </PeekTotal>
     </>
   )
@@ -407,6 +409,7 @@ function TopBar() {
   const notes = useNotes(ws, demo, connection)
   const unread = notes.filter((n) => !ws.readNotifications.includes(n.id)).length
   const name = ws.profile?.fullName || (demo ? DEMO_TEACHER.display : ws.displayName)
+  const status = useNetStatus()
   const email = isConnected(session) ? session.email : DEMO_TEACHER.email
 
   return (
@@ -425,12 +428,13 @@ function TopBar() {
         </IconButton>
         <button
           type="button"
-          aria-label={`Account: ${name}`}
+          aria-label={`Account: ${name}, ${status.label}`}
           aria-expanded={menu === 'profile'}
           onClick={() => setMenu((m) => (m === 'profile' ? null : 'profile'))}
-          className="press rounded-full shadow-brut-sm"
+          className="press relative rounded-full shadow-brut-sm"
         >
           <Avatar name={name} spec={ws.profile?.avatar} size={40} />
+          <StatusDot level={status.level} className="absolute -right-1 -bottom-1 size-4" />
         </button>
       </div>
 
@@ -511,7 +515,8 @@ function TopBar() {
                     <p className="truncate text-xs text-subtle">{email}</p>
                   </div>
                 </div>
-                <ul className="mt-3 space-y-1.5">
+                <StatusRow status={status} />
+                <ul className="mt-2.5 space-y-1.5">
                   {MENU.map((item) => (
                     <li key={item.screen}>
                       <button
@@ -541,6 +546,32 @@ function TopBar() {
         </>
       )}
     </header>
+  )
+}
+
+/** Compact online status inside the account menu, between the profile and the settings. */
+function StatusRow({ status }: { status: NetStatus }) {
+  const connected = useStore((s) => isConnected(s.session))
+  const syncing = useStore((s) => s.syncing)
+  const syncNow = useStore((s) => s.syncNow)
+  return (
+    <div className="mt-3 flex items-center gap-2 rounded-lg border-2 border-ink bg-canvas px-2.5 py-1.5">
+      <span className={cx('size-2.5 shrink-0 rounded-full border border-ink', NET_LEVELS[status.level].dot, NET_LEVELS[status.level].blink && 'animate-pulse')} aria-hidden />
+      <span className="min-w-0 flex-1 truncate text-[12px] leading-tight">
+        <b>{status.label}</b> <span className="text-subtle">· {status.detail}</span>
+      </span>
+      {connected && status.level !== 'offline' && (
+        <button
+          type="button"
+          aria-label="Sync now"
+          disabled={syncing}
+          onClick={() => void syncNow()}
+          className="-mr-1 shrink-0 rounded-md p-1 disabled:opacity-50"
+        >
+          <RefreshCw size={14} strokeWidth={2.5} className={cx(syncing && 'animate-spin')} aria-hidden />
+        </button>
+      )}
+    </div>
   )
 }
 

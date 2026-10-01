@@ -1,4 +1,6 @@
-import type { AssessmentCreate, AssessmentOut, OfflineSubmission, SubmissionOut } from './api'
+import type { AssessmentCreate, AssessmentOut, ClassBody, ClassOut, EventBody, EventOut, OfflineSubmission, SubmissionOut } from './api'
+import type { CalendarEvent } from './calendar'
+import type { TeacherClass } from './classes'
 import { formatHundredths, toHundredths, type Answer, type KeyQuestion, type Score } from './scoring'
 import type { LocalAssessment, LocalSubmission } from './workspace'
 
@@ -26,9 +28,46 @@ export function assessmentPayload(a: LocalAssessment): AssessmentCreate {
     title: a.title.slice(0, 200),
     template_id: TEMPLATE_ID,
     assessment_date: a.assessmentDate,
-    // The backend has no class field on assessments; category is a free label it only stores.
+    // The label is kept for older servers and tools; class_id is the real link.
     category: a.classLabel.trim().slice(0, 80) || null,
+    ...(a.classId ? { class_id: a.classId } : {}),
+    ...(a.dueISO ? { due_at: a.dueISO } : {}),
     answer_key: { id: a.key.id, questions: a.key.questions.map(questionPayload) },
+  }
+}
+
+export function classPayload(c: TeacherClass): ClassBody {
+  return { level: c.level, grade: c.grade, section: c.section.slice(0, 80), subject: c.subject.slice(0, 120), students: c.students.slice(0, 200) }
+}
+
+export function classFromServer(c: ClassOut): TeacherClass {
+  return { id: c.id, level: c.level, grade: c.grade, section: c.section, subject: c.subject, students: c.students }
+}
+
+export function eventPayload(e: CalendarEvent): EventBody {
+  return {
+    title: e.title.slice(0, 80),
+    type: e.type,
+    starts_at: e.startISO,
+    duration_min: Math.min(600, Math.max(0, e.durationMin)),
+    all_day: e.allDay,
+    class_id: e.classId,
+    assessment_id: e.assessmentId,
+    notes: e.notes.slice(0, 500),
+  }
+}
+
+export function eventFromServer(e: EventOut): CalendarEvent {
+  return {
+    id: e.id,
+    title: e.title,
+    type: e.type,
+    startISO: e.starts_at,
+    durationMin: e.duration_min,
+    allDay: e.all_day,
+    classId: e.class_id,
+    assessmentId: e.assessment_id,
+    notes: e.notes,
   }
 }
 
@@ -50,6 +89,7 @@ export function submissionPayload(s: LocalSubmission): OfflineSubmission {
       student_label: s.studentLabel.trim().slice(0, 120),
       source: s.source,
       answers: s.answers.map(answerPayload),
+      ...(s.submittedISO ? { submitted_at: s.submittedISO } : {}),
     },
     adjustments: s.adjustments.map((a) => ({ number: a.number, score: a.score, reason: a.reason })),
     teacher_approved: true,
@@ -90,11 +130,11 @@ export function assessmentFromServer(a: AssessmentOut): LocalAssessment | null {
   return {
     id: a.id,
     title: a.title,
-    // Linked to a section when merged into the workspace (matched by label).
-    classId: null,
+    // Older assessments without class_id are linked to a section by label when merged.
+    classId: a.class_id ?? null,
     classLabel: a.category || 'Unassigned class',
     assessmentDate: a.assessment_date,
-    dueISO: null,
+    dueISO: a.due_at ?? null,
     key: {
       id: key.id,
       version: key.version,
@@ -133,7 +173,8 @@ export function submissionFromServer(s: SubmissionOut, assessments: LocalAssessm
     answers: s.answers,
     adjustments: [],
     score: scoreFromServer(s.score),
-    approvedISO: s.approved_at ?? s.local_approved_at ?? s.created_at,
+    approvedISO: s.local_approved_at ?? s.approved_at ?? s.created_at,
+    submittedISO: s.submitted_at ?? null,
     feedback: '',
     origin: 'server',
     sync: 'synced',

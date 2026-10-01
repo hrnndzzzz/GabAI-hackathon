@@ -8,12 +8,62 @@ interface NativeBridge {
   setDarkChrome(dark: boolean): void
   /** Newer shells: also remembers the theme so the next launch starts in it. */
   setTheme?(dark: boolean): void
+  /** Outcome of the email-confirmation link that opened the app (JSON, consumed on read). */
+  takeAuthEvent?(): string | null
+  readClipboard?(): string | null
+  /** {"x": centre of the punch-hole camera in CSS px} or {} when there is none. */
+  getCutout?(): string
+  setStatusRing?(color: string, pulse: boolean, durationMs: number): void
 }
 
 declare global {
   interface Window {
     GabAINative?: NativeBridge
     gabaiBack?: () => boolean
+    /** Called by the shell when a confirmation link arrives while the app is open. */
+    gabaiAuthEvent?: () => void
+  }
+}
+
+/** Horizontal centre of the front camera's punch hole, in CSS px, or null. */
+export function cutoutX(): number | null {
+  try {
+    const x = (JSON.parse(window.GabAINative?.getCutout?.() ?? '{}') as { x?: number }).x
+    return typeof x === 'number' ? x : null
+  } catch {
+    return null
+  }
+}
+
+/** Briefly rings the punch-hole camera in a status colour (Android only). */
+export function showStatusRing(color: string, pulse: boolean, durationMs: number): void {
+  window.GabAINative?.setStatusRing?.(color, pulse, durationMs)
+}
+
+/** Clipboard text: from the Android shell, else the browser's clipboard API (which may ask first). */
+export async function readClipboardText(): Promise<string | null> {
+  if (window.GabAINative?.readClipboard) return window.GabAINative.readClipboard() ?? null
+  try {
+    return (await navigator.clipboard?.readText()) ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Where the confirmation email sends the teacher: back into the app on Android. */
+export const CONFIRM_REDIRECT = 'gabai://auth/confirmed'
+
+export interface AuthEvent {
+  kind: 'confirmed' | 'expired' | 'error'
+  message?: string
+}
+
+export function takeAuthEvent(): AuthEvent | null {
+  try {
+    const raw = window.GabAINative?.takeAuthEvent?.()
+    return raw ? (JSON.parse(raw) as AuthEvent) : null
+  } catch {
+    return null
   }
 }
 

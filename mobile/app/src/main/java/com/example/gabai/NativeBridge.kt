@@ -1,6 +1,7 @@
 package com.example.gabai
 
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.print.PrintAttributes
@@ -46,6 +47,27 @@ class NativeBridge(private val activity: MainActivity) {
     fun setDarkChrome(dark: Boolean) {
         activity.runOnUiThread { activity.setDarkChrome(dark) }
     }
+
+    @JavascriptInterface
+    fun getCutout(): String = activity.cutoutJson()
+
+    @JavascriptInterface
+    fun setStatusRing(color: String, pulse: Boolean, durationMs: Int) {
+        if (!Regex("#[0-9A-Fa-f]{6}").matches(color)) return
+        activity.runOnUiThread { activity.showStatusRing(color, pulse, durationMs.toLong()) }
+    }
+
+    /** Text on the clipboard, for "Paste list" (WebView pages can't read the clipboard themselves). */
+    @JavascriptInterface
+    fun readClipboard(): String? {
+        val clip = activity.getSystemService(ClipboardManager::class.java)?.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        return clip.getItemAt(0).coerceToText(activity)?.toString()?.take(100_000)
+    }
+
+    /** Outcome of the email-confirmation link that opened the app, if any (consumed on read). */
+    @JavascriptInterface
+    fun takeAuthEvent(): String? = activity.takeAuthEvent()
 
     @JavascriptInterface
     fun setTheme(dark: Boolean) {
