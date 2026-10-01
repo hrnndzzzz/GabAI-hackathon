@@ -1,0 +1,44 @@
+{
+  "notice": "Fictional manual request samples; UUID references depend on previous successful calls. No live provider output.",
+  "assessment_create": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "title": "Fictional fractions check",
+    "description": "Teacher-reviewed classroom practice",
+    "template_id": "mcq-20-v1",
+    "assessment_date": "2026-09-15",
+    "answer_key": {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "questions": [
+        {"number": 1, "kind": "multiple_choice", "points": "2.00", "choices": ["A", "B", "C", "D"], "correct_answer": "B", "alternatives": [], "competency_ids": []},
+        {"number": 2, "kind": "true_false", "points": "1.00", "correct_answer": "TRUE", "alternatives": [], "choices": [], "competency_ids": []}
+      ]
+    }
+  },
+  "verify_key": {"confirmed": true},
+  "submission_create": {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "assessment_id": "33333333-3333-4333-8333-333333333333",
+    "answer_key_id": "44444444-4444-4444-8444-444444444444",
+    "student_label": "Fictional Learner A",
+    "source": "on_device",
+    "answers": [
+      {"number": 1, "state": "confirmed", "value": "B", "extracted": {"number": 1, "state": "recognized", "value": "B", "review_flags": ["teacher review"], "notes": "Fixture, not actual recognition"}},
+      {"number": 2, "state": "confirmed_blank", "value": null}
+    ]
+  },
+  "adjustment": {"expected_revision": 1, "adjustment": {"number": 2, "score": "0.50", "reason": "Teacher accepted a separately observed oral response"}},
+  "approve_after_adjustment": {"expected_revision": 2, "confirmed": true},
+  "offline_client_score_without_adjustment": {
+    "automatic_score": "2.00", "final_score": "2.00", "possible_score": "3.00",
+    "items": [
+      {"number": 1, "resolved": true, "automatic_score": "2.00", "adjusted_score": null, "final_score": "2.00", "possible_score": "2.00"},
+      {"number": 2, "resolved": true, "automatic_score": "0.00", "adjusted_score": null, "final_score": "0.00", "possible_score": "1.00"}
+    ]
+  },
+  "generate_material": {"kind": "lesson_plan", "topic": "Comparing fractions", "student_level": "Grade 4", "objectives": ["Compare fractions with equal denominators"], "preferences": "20 minutes, paper strips, no internet required for the activity"},
+  "follow_up_material": {"kind": "follow_up", "topic": "Fractions", "student_level": "Grade 4", "objectives": ["Compare halves and quarters"], "findings": [{"concept": "Fraction comparison", "evidence": "Teacher selected: 4 of 10 approved answers on a comparison question were incorrect."}]},
+  "rewrite_material": {"kind": "rewrite", "topic": "Fractions", "student_level": "Grade 4", "objectives": ["Explain equal parts"], "source_text": "A fraction describes equal parts of a whole."},
+  "academic_year": {"id": "66666666-6666-4666-8666-666666666666", "name": "2026-2027", "starts_on": "2026-06-01", "ends_on": "2027-05-31"},
+  "student": {"id": "77777777-7777-4777-8777-777777777777", "display_name": "Fictional Learner A", "local_identifier": "DEMO-A"},
+  "example_error": {"error": {"code": "review_required", "message": "Approval requires a verified key, confirmed answers and scores for all items", "request_id": "88888888-8888-4888-8888-888888888888"}}
+}

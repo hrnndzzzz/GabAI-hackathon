@@ -1,0 +1,74 @@
+{
+  "spec_version": "scoring-v1",
+  "data_notice": "Fictional, hand-calculated interoperability cases. No live OCR or phone test results.",
+  "answer_key_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "questions": [
+    {"number": 1, "kind": "multiple_choice", "points": "2.50", "choices": ["A", "B", "C", "D"], "correct_answer": "A"},
+    {"number": 2, "kind": "true_false", "points": "1.25", "correct_answer": "TRUE"},
+    {"number": 3, "kind": "multiple_choice", "points": "0.25", "choices": ["A", "B", "C", "D"], "correct_answer": "C", "alternatives": ["D"]}
+  ],
+  "cases": [
+    {
+      "name": "lowercase_ascii_trim_tf_alias_and_alternative",
+      "answers": [
+        {"number": 1, "state": "confirmed", "value": " a\t"},
+        {"number": 2, "state": "confirmed", "value": "t"},
+        {"number": 3, "state": "confirmed", "value": "D"}
+      ],
+      "automatic_score": "4.00", "final_score": "4.00", "possible_score": "4.00", "unresolved_numbers": [],
+      "item_automatic": ["2.50", "1.25", "0.25"], "item_final": ["2.50", "1.25", "0.25"]
+    },
+    {
+      "name": "confirmed_blank_and_incorrect_are_resolved_zero",
+      "answers": [
+        {"number": 1, "state": "confirmed", "value": "A"},
+        {"number": 2, "state": "confirmed_blank"},
+        {"number": 3, "state": "confirmed", "value": "B"}
+      ],
+      "automatic_score": "2.50", "final_score": "2.50", "possible_score": "4.00", "unresolved_numbers": [],
+      "item_automatic": ["2.50", "0.00", "0.00"], "item_final": ["2.50", "0.00", "0.00"]
+    },
+    {
+      "name": "ambiguous_and_missing_do_not_become_zero",
+      "answers": [
+        {"number": 1, "state": "confirmed", "value": "A"},
+        {"number": 2, "state": "ambiguous", "value": "T/F"}
+      ],
+      "automatic_score": "2.50", "final_score": "2.50", "possible_score": "4.00", "unresolved_numbers": [2, 3],
+      "item_automatic": ["2.50", null, null], "item_final": ["2.50", null, null]
+    },
+    {
+      "name": "recognition_alone_never_confirms",
+      "answers": [
+        {"number": 1, "state": "recognized", "value": "A"},
+        {"number": 2, "state": "blank_candidate"},
+        {"number": 3, "state": "unreadable"}
+      ],
+      "automatic_score": "0.00", "final_score": "0.00", "possible_score": "4.00", "unresolved_numbers": [1, 2, 3],
+      "item_automatic": [null, null, null], "item_final": [null, null, null]
+    },
+    {
+      "name": "teacher_adjustment_retains_automatic",
+      "answers": [
+        {"number": 1, "state": "confirmed", "value": "B"},
+        {"number": 2, "state": "confirmed", "value": "false"},
+        {"number": 3, "state": "confirmed_blank"}
+      ],
+      "adjustments": [{"number": 1, "score": "1.75", "reason": "Teacher accepted partial reasoning"}],
+      "automatic_score": "0.00", "final_score": "1.75", "possible_score": "4.00", "unresolved_numbers": [],
+      "item_automatic": ["0.00", "0.00", "0.00"], "item_final": ["1.75", "0.00", "0.00"]
+    }
+  ],
+  "normalization": [
+    {"kind": "multiple_choice", "input": " b\r\n", "expected": "B"},
+    {"kind": "multiple_choice", "input": "(A)", "expected": null},
+    {"kind": "multiple_choice", "input": "A.", "expected": null},
+    {"kind": "multiple_choice", "input": "A B", "expected": null},
+    {"kind": "multiple_choice", "input": "Ａ", "expected": null},
+    {"kind": "multiple_choice", "input": "\u00a0A\u00a0", "expected": null},
+    {"kind": "true_false", "input": " f ", "expected": "FALSE"},
+    {"kind": "true_false", "input": "True", "expected": "TRUE"},
+    {"kind": "true_false", "input": "1", "expected": null},
+    {"kind": "true_false", "input": "yes", "expected": null}
+  ]
+}

@@ -1,0 +1,174 @@
+"""Regenerate reviewable DDL/OpenAPI contracts. Does not contact external services."""
+
+import json
+from pathlib import Path
+
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import CreateIndex, CreateTable
+
+from app.config import Settings
+from app.main import create_app
+from app.models import Base
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def export():
+    output = ROOT / "docs" / "openapi.json"
+    output.parent.mkdir(exist_ok=True)
+    app = create_app(Settings(app_env="test", _env_file=None))
+    contract = app.openapi()
+    output.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+    write_api_reference(contract)
+    app.state.auth_http.close()
+    app.state.engine.dispose()
+    dialect = postgresql.dialect()
+    ddl = ["-- Generated from app/models.py. Apply once, followed by 0002_security.sql.\nBEGIN;"]
+    for table in Base.metadata.sorted_tables:
+        ddl.append(str(CreateTable(table).compile(dialect=dialect)).strip() + ";")
+        for index in sorted(table.indexes, key=lambda i: i.name):
+            ddl.append(str(CreateIndex(index).compile(dialect=dialect)) + ";")
+    ddl.append("COMMIT;\n")
+    path = ROOT / "supabase" / "migrations" / "0001_schema.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n\n".join(ddl), encoding="utf-8")
+
+
+def write_api_reference(contract):
+    """Generate a route-by-route index and illustrative requests from the actual OpenAPI schemas."""
+    from uuid import NAMESPACE_DNS, uuid5
+
+    fixtures = json.loads((ROOT / "fixtures/api-examples.json").read_text(encoding="utf-8"))
+    examples = {
+        "AssessmentCreate": fixtures["assessment_create"],
+        "KeyCreate": fixtures["assessment_create"]["answer_key"],
+        "SubmissionCreate": fixtures["submission_create"],
+        "ClientScore": fixtures["offline_client_score_without_adjustment"],
+        "GenerateMaterial": fixtures["generate_material"],
+        "AdjustmentRequest": fixtures["adjustment"],
+        "QuestionIn": fixtures["assessment_create"]["answer_key"]["questions"][0],
+        "AnswerIn": fixtures["submission_create"]["answers"][0],
+        "MaterialContent": {
+            "title": "Fictional lesson",
+            "sections": [{"heading": "Practice", "body": "Compare paper halves."}],
+            "quiz_questions": [],
+            "rubric_criteria": [],
+            "rewritten_text": None,
+        },
+        "ConsultationContent": {
+            "summary": "Teacher-reviewed discussion of the supplied evidence.",
+            "practice_suggestions": ["Practice comparing halves."],
+            "limitations": ["Few assessed questions."],
+        },
+    }
+
+    def example(schema, field="value"):
+        if "$ref" in schema:
+            name = schema["$ref"].split("/")[-1]
+            return examples.get(name) or example(contract["components"]["schemas"][name], field)
+        if "const" in schema:
+            return schema["const"]
+        if "default" in schema and schema["default"] is not None:
+            return schema["default"]
+        if "enum" in schema:
+            return schema["enum"][0]
+        if "anyOf" in schema:
+            return example(next(item for item in schema["anyOf"] if item.get("type") != "null"), field)
+        kind = schema.get("type")
+        if kind == "object":
+            required = schema.get("required", [])
+            return {
+                name: example(prop, name)
+                for name, prop in schema.get("properties", {}).items()
+                if name in required or name == "id"
+            }
+        if kind == "array":
+            return [example(schema["items"], field) for _ in range(max(1, schema.get("minItems", 0)))]
+        if kind in ("integer", "number"):
+            return max(1, schema.get("minimum", 1))
+        if kind == "boolean":
+            return True
+        if schema.get("format") == "uuid":
+            if field in ("assessment_id",):
+                return fixtures["assessment_create"]["id"]
+            if field in ("answer_key_id", "key_id"):
+                return fixtures["assessment_create"]["answer_key"]["id"]
+            if field == "submission_id":
+                return fixtures["submission_create"]["id"]
+            return str(uuid5(NAMESPACE_DNS, "fictional.teachease." + field))
+        if schema.get("format") == "date-time":
+            return "2026-09-15T09:00:00+08:00"
+        if schema.get("format") == "date":
+            return {"starts_on": "2026-06-01", "ends_on": "2027-05-31"}.get(field, "2026-09-15")
+        return {
+            "name": "Fictional record",
+            "display_name": "Fictional Learner A",
+            "reason": "Teacher reviewed evidence",
+            "score": "1.00",
+            "template_id": "mcq-v1",
+        }.get(field, "Fictional example")
+
+    def schema_name(schema):
+        return schema.get("$ref", "").split("/")[-1] or schema.get("type", "none")
+
+    lines = [
+        "# API reference",
+        "",
+        "Generated from the running FastAPI OpenAPI contract. Do not edit this file by hand.",
+        "",
+        "All `/v1` routes require a verified Supabase bearer token (production: MFA `aal2`). Health and documentation are public. Request/response field definitions, constraints, enums and nullability are in [openapi.json](openapi.json) and live `/docs`.",
+        "",
+        "Common errors: 401 missing/invalid token; 403 MFA; 404 absent/foreign-owned record; 409 conflict/stale revision/review required/score mismatch; 413 size; 415 type; 422 validation; 429 AI limit; 500 unexpected; 502 provider/invalid AI output; 503 Auth/database/configuration; 504 AI timeout. Error format: `error: {code, message, request_id}`. No submitted sensitive values are echoed.",
+        "",
+        "List responses: `items`, `limit`, `offset`, `has_more`. Limits 1–100 (default 20); offset default 0. GETs are safe to retry. Only the `/uploads/*` create operations guarantee idempotent retries. Other create retries can conflict or produce another generated draft. Approval/edit transitions and complete retry rules are in [frontend-integration.md](frontend-integration.md).",
+        "",
+        "Examples below are fictional structural examples. Create referenced records first, use returned UUIDs/revisions, and respect date/ownership relationships. The shared `$BASE_URL` and `$ACCESS_TOKEN` variables are supplied by the caller; do not commit real tokens.",
+        "",
+        "| Method | Route | Request body | Success response | Status |",
+        "|---|---|---|---|---|",
+    ]
+    operations = []
+    for path, methods in contract["paths"].items():
+        for method, op in methods.items():
+            body = op.get("requestBody", {}).get("content", {})
+            body_schema = next(iter(body.values()))["schema"] if body else {}
+            success = next((code for code in op["responses"] if code.startswith("2")), "200")
+            response = (
+                op["responses"][success].get("content", {}).get("application/json", {}).get("schema", {})
+            )
+            lines.append(
+                f"| {method.upper()} | `{path}` | {schema_name(body_schema)} | {schema_name(response)} | {success} |"
+            )
+            operations.append((path, method, op, body, body_schema))
+    for path, method, op, body, schema in operations:
+        lines.extend(
+            ["", f"## {method.upper()} {path}", "", op.get("description", op.get("summary", "")), ""]
+        )
+        url = path
+        query = []
+        for parameter in op.get("parameters", []):
+            if parameter["in"] == "path":
+                url = url.replace(
+                    "{" + parameter["name"] + "}", str(example(parameter["schema"], parameter["name"]))
+                )
+            elif parameter["in"] == "query" and parameter.get("required"):
+                query.append(parameter["name"] + "=" + str(example(parameter["schema"], parameter["name"])))
+        if query:
+            url += "?" + "&".join(query)
+        command = f'curl -X {method.upper()} "$BASE_URL{url}"'
+        if path.startswith("/v1"):
+            command += ' -H "Authorization: Bearer $ACCESS_TOKEN"'
+        if "multipart/form-data" in body:
+            command += ' -F "file=@fictional-paper.png;type=image/png"'
+        elif body:
+            command += ' -H "Content-Type: application/json" --data @request.json'
+        lines.extend(["```bash", command, "```"])
+        if body and "multipart/form-data" not in body:
+            lines.extend(
+                ["", "Example `request.json`:", "", "```json", json.dumps(example(schema), indent=2), "```"]
+            )
+    (ROOT / "docs/api.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    export()
