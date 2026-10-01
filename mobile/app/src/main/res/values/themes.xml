@@ -1,0 +1,7 @@
+<resources>
+    <!-- NoActionBar: the web app draws its own top bar. -->
+    <style name="Theme.GabAI" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

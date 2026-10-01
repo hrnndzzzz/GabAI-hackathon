@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+/* Short phones (e.g. 360×740): tighten the Hub so it still fits without scrolling. */
+@custom-variant short (@media (max-height: 780px));
+
+@theme {
+  --color-canvas: #f8f9fa;
+  --color-ink: #1a1a1a;
+  --color-brand: #4d96ff;
+  --color-sun: #ffd93d;
+  --color-mint: #6bcb77;
+  --color-leaf: #22c55e;
+  --color-coral: #ff5964;
+  --color-alert: #ef4444;
+  --color-alert-ink: #b42318;
+  --color-line: #e2e8f0;
+  --color-muted: #94a3b8;
+  --color-subtle: #5b6472;
+
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --shadow-brut-sm: 1px 1px 0 #1a1a1a;
+  --shadow-brut: 3px 3px 0 #1a1a1a;
+  --shadow-brut-lg: 5px 5px 0 #1a1a1a;
+
+  --animate-screen-in: screen-in 180ms ease-out;
+  --animate-scan: scan 1.8s ease-in-out infinite;
+  --animate-flash: flash 260ms ease-out forwards;
+  --animate-toast-in: toast-in 200ms ease-out;
+
+  @keyframes screen-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes scan {
+    0%, 100% { top: 4%; }
+    50% { top: 92%; }
+  }
+  @keyframes flash {
+    from { opacity: 0.9; }
+    to { opacity: 0; }
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* Hard-offset "press" feedback: the element drops onto its own shadow. */
+@utility press {
+  transition: transform 80ms ease, box-shadow 80ms ease;
+  &:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html {
+    background: #e9ecef;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: #e9ecef;
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button {
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* Grade-level slider: chunky track with a hard-shadow thumb. */
+.brut-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  border: 2px solid var(--color-ink);
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--range-color, var(--color-mint)) var(--fill), #fff var(--fill));
+  outline-offset: 6px;
+}
+.brut-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 2px solid var(--color-ink);
+  background: #fff;
+  box-shadow: 2px 2px 0 var(--color-ink);
+}
+.brut-range::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 2px solid var(--color-ink);
+  background: #fff;
+  box-shadow: 2px 2px 0 var(--color-ink);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

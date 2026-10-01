@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same mark as the web logo: scan-frame corners around an AI sparkle,
+     scaled from a 48-unit grid into the adaptive icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="24"
+        android:pivotY="24"
+        android:scaleX="1.6"
+        android:scaleY="1.6"
+        android:translateX="30"
+        android:translateY="30">
+        <path
+            android:pathData="M11,18V11H18M30,11H37V18M37,30V37H30M18,37H11V30"
+            android:strokeWidth="3.5"
+            android:strokeColor="#1A1A1A"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="#FFD93D"
+            android:pathData="M24,14C24.7,19.6 27.4,22.3 33,23C27.4,23.7 24.7,26.4 24,32C23.3,26.4 20.6,23.7 15,23C20.6,22.3 23.3,19.6 24,14Z"
+            android:strokeWidth="2.5"
+            android:strokeColor="#1A1A1A"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>
